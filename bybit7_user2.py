@@ -55,7 +55,7 @@ CONFIGS = {
 
 MAX_STEP          = 7
 FEE_RATE          = 0.0007   
-REENTRY_COOLDOWN  = 300       
+REENTRY_COOLDOWN  = 900       
 SUPPLY_ZONE_MARGIN = 0.003   
 HEDGE_START_STEP  = 5        
 
@@ -264,17 +264,32 @@ class FinalSniperBotV6:
                             # ★BUG-2 수정: ema50 <= 0 시 continue → if ema50 > 0 으로 교체
                             #   continue는 for symbol 루프를 건너뛰어 XAUUSDT 마틴게일 관리까지 스킵했음
                             if ema50 > 0:
+                                # ── 롱 진입 조건 ──────────────────────────
+                                # 조건 A (추세 눌림목): 종가 > EMA50 이면서 RSI ≤ 35
+                                # 조건 B (절대 과매도): RSI ≤ 30 (이평선 위치 무관)
+                                long_A  = (closed_price > ema50 and rsi <= 35)
+                                long_B  = (rsi <= 30)
+                                # ── 숏 진입 조건 ──────────────────────────
+                                # 조건 A (추세 반등):   종가 < EMA50 이면서 RSI ≥ 65
+                                # 조건 B (절대 과매수): RSI ≥ 70 (이평선 위치 무관)
+                                short_A = (closed_price < ema50 and rsi >= 65)
+                                short_B = (rsi >= 70)
+
                                 side_order = None
-                                if closed_price > ema50 and rsi <= 35:   # 롱: 종가 > EMA50, RSI ≤ 35
+                                if long_A or long_B:
                                     side_order = "Buy"
-                                elif closed_price < ema50 and rsi >= 65: # 숏: 종가 < EMA50, RSI ≥ 65
+                                elif short_A or short_B:
                                     side_order = "Sell"
+
                                 if side_order:
                                     qty = conf["min_unit"]
                                     session.place_order(category="linear", symbol=symbol, side=side_order, orderType="Market",
                                                         qty=str(round(qty, conf["qty_step"])), positionIdx=1 if side_order == "Buy" else 2)
                                     state.update({"reentry_pending":True, "side":side_order})
-                                    logging.info(f"🎯 [{symbol}] {side_order} 진입 (RSI: {round(rsi,1)})")
+                                    # 어떤 조건으로 진입했는지 로그에 기록
+                                    reason = "A(눌림목)" if (side_order == "Buy" and long_A) or (side_order == "Sell" and short_A) else "B(절대RSI)"
+                                    logging.info(f"🎯 [{symbol}] {side_order} 진입 | 조건:{reason} RSI:{round(rsi,1)} EMA50:{round(ema50,2)} 종가:{closed_price}")
+
                     # ─── [B] 포지션 있음 ─────────────────────────────
                     else:
                         cur_sz, cur_av = float(main_p["size"]), float(main_p["avgPrice"])
