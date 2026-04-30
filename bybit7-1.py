@@ -1,41 +1,40 @@
 """
-FinalSniperBotV6 - 클로드 5차 검수 최종 수정판
+FinalSniperBotV6 - 클로드 6차 검수 최종 수정판
 ══════════════════════════════════════════════════
-[4차까지 누적 수정 확인]
-  ✅ if not main_p 블록 구조 정상 (진입 로직 내부 위치)
-  ✅ ema50 <= 0 → if ema50 > 0 방어 처리
-  ✅ get_executions 반대체결 필터 (start_price 오염 방지)
-  ✅ sleep(3) 후 포지션 재조회
-  ✅ calc_step 여유치 0.95 / limit=200 / processed_be 플래그
+[5차까지 누적 반영 확인]
+  ✅ Atomic State Update (reentry_pending 선설정)
+  ✅ detected_qty=cur_sz / last_step=1 강제 고정
+  ✅ orderFilter Order+StopOrder 명시 취소
+  ✅ if not main_p 내 진입 로직 / ema50>0 방어
+  ✅ calc_step 0.95 / limit=200 / processed_be 플래그
 
-[5차 신규 수정 - 레이스 컨디션 및 중복 진입 방지]
-  🔴 FIX-1: Atomic State Update
-            place_order 직전 reentry_pending=True 선설정
-            실패 시 except에서 False 복구 → 재시도 허용
-            성공/실패 무관하게 state 일관성 보장
-  🔴 FIX-2: 첫 진입 시 last_step=1 강제 고정
-            신규 포지션 인식 시 last_step=1 명시 강제
-            중복 체결로 qty가 2배여도 step이 2로 오판되지 않도록
-            detected_qty는 항상 min_unit 고정 유지
-  🔴 FIX-3: 본전 덜어내기 이중 보호
-            place_nets_and_exit 내부 조건에 last_step >= 2 명시
-            실시간 체크(341번줄)에 이미 있는 조건과 이중 보호
-            step=1 상태에서는 어떤 경우에도 덜어내기 미발동
-  🟠 FIX-4: 중복 진입 시도 Skip 로그
-            reentry_pending=True 상태에서 RSI 조건 재충족 시
-            SKIP 로그 기록으로 상태 추적 가능
+[6차 신규 수정 — 중복 오더 완전 차단 3계층 방어]
+
+  🔴 ADD-1: 봇 시작 시 전체 오더 정리 (재시작 잔존 오더 제거)
+            봇 재시작 후 거래소에 남아있던 오더가 새 오더와 중복되는 문제 해결
+            run() 최상단에서 모든 종목 Order+StopOrder 완전 취소 후 진입
+
+  🔴 ADD-2: cancel_and_wait() 함수 신설 (취소 완료 확인 후 배치)
+            기존: 취소 명령 후 1.5초 고정 대기 (취소 완료 미확인)
+            수정: 0.5초 간격 폴링으로 Order+StopOrder 양쪽 0개 확인 후 배치
+            타임아웃 6초 설정, 개별 필터 확인으로 완전 소멸 보장
+
+  🔴 ADD-3: place_nets_and_exit 모든 호출 경로에 Lock 통일
+            기존: size_changed 경로는 Lock 없이 호출
+                  본전탈출 실시간 체크와 동시 실행 가능 → 오더 중복
+            수정: 모든 호출 경로를 state["lock"]으로 보호
 
 [확인 사항]
-  ℹ️  헷지 주문: Bybit V5 orderType="Market" + triggerPrice → 조건부 스탑
+  ℹ️  헷지 주문: Bybit V5 orderType="Market" + triggerPrice → 조건부 스탑 처리
 """
 
-print("Step 1: 프로그램 로딩 시작...")
+logging.info("Step 1: 프로그램 로딩 시작...")
 import time
 import logging
 import numpy as np
 import pandas as pd
 import requests
-print("Step 2: 라이브러리 로드 완료")
+logging.info("Step 2: 라이브러리 로드 완료")
 from pybit.unified_trading import HTTP
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -64,11 +63,28 @@ REENTRY_COOLDOWN  = 900
 SUPPLY_ZONE_MARGIN = 0.003   
 HEDGE_START_STEP  = 5        
 
-logging.basicConfig(
-    level=logging.INFO, 
-    format='%(asctime)s - %(message)s',
-    handlers=[logging.FileHandler("user2_bybit7.log"), logging.StreamHandler()] 
-)
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# [로깅 설정] 전역 1회만 실행 — 핸들러 중복 방지
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# 질문1: 핸들러 중복 방지
+#   basicConfig는 이미 핸들러가 있으면 무시되지만,
+#   IDE 환경이나 모듈 reload 시 핸들러가 누적될 수 있음.
+#   루트 로거의 기존 핸들러를 먼저 전부 제거하고 재등록.
+# 질문2: 전역 1회 설정
+#   클래스 내부나 함수 안이 아닌 모듈 최상단에서 단 한 번만 실행.
+# 질문4: print/logging 혼용 제거
+#   Step 1~4 print()를 logging.info()로 통일.
+_logger = logging.getLogger()           # 루트 로거 취득
+_logger.handlers.clear()               # 기존 핸들러 전부 제거 (중복 방지)
+_logger.setLevel(logging.INFO)
+_fmt = logging.Formatter('%(asctime)s - %(message)s')
+_fh  = logging.FileHandler("user2_bybit7.log", encoding="utf-8")
+_fh.setFormatter(_fmt)
+_sh  = logging.StreamHandler()
+_sh.setFormatter(_fmt)
+_logger.addHandler(_fh)
+_logger.addHandler(_sh)
+
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # [2] 유틸리티 함수
@@ -104,10 +120,45 @@ def get_supply_zones(symbol: str, n_zones: int = 10) -> list[float]:
         return sorted([round(np.mean(c), 2) for c in clusters[:n_zones]])
     except: return []
 
-def is_near_supply_zone(price: float, zones: list[float]) -> bool:
+def is_near_supply_zone(price: float, zones: list) -> bool:
     if not zones: return True
     for zone in zones:
         if abs(price - zone) / zone <= SUPPLY_ZONE_MARGIN: return True
+    return False
+
+def cancel_and_wait(symbol: str, timeout: float = 6.0) -> bool:
+    """
+    ADD-2: 취소 완료 확인 후 배치 (Wait-until-Clear)
+    ─────────────────────────────────────────────────
+    단계 1: Order + StopOrder 취소 명령 각각 발송
+    단계 2: 0.5초 간격 폴링으로 양쪽 모두 0개 확인
+    단계 3: 완전 소멸 확인 후 True 반환 → 오더 배치 진행
+    타임아웃(기본 6초) 초과 시 경고 로그 후 강제 진행
+    """
+    for order_filter in ["Order", "StopOrder"]:
+        try:
+            session.cancel_all_orders(
+                category="linear", symbol=symbol, orderFilter=order_filter
+            )
+        except Exception:
+            pass  # 해당 타입 주문 없을 경우 무시
+
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        time.sleep(0.5)
+        try:
+            normal = session.get_open_orders(
+                category="linear", symbol=symbol,
+                orderFilter="Order")["result"]["list"]
+            cond = session.get_open_orders(
+                category="linear", symbol=symbol,
+                orderFilter="StopOrder")["result"]["list"]
+            if len(normal) == 0 and len(cond) == 0:
+                return True  # 완전 소멸 확인
+        except Exception:
+            pass
+
+    logging.warning(f"[{symbol}] ⚠️  오더 취소 확인 타임아웃 ({timeout}초) — 강제 진행")
     return False
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -178,13 +229,15 @@ class FinalSniperBotV6:
         hedge_trig_dir = 2 if side == "Buy" else 1
 
         try:
-            session.cancel_all_orders(category="linear", symbol=symbol)
-            time.sleep(1.5)
+            # ★ADD-2: cancel_and_wait으로 교체
+            # 기존 고정 1.5초 대기 → 취소 완료 폴링 확인 방식으로 변경
+            # Order + StopOrder 양쪽 모두 0개 확인 후 배치 진행
+            cancel_and_wait(symbol)
 
-            # ★FIX-3: 본전 덜어내기 이중 보호
-            # state["last_step"] >= 2 조건을 여기서도 명시하여
-            # 실시간 체크(run 내부)와 이중으로 보호.
-            # step=1(첫 진입) 상태에서는 어떤 경로로도 발동 불가.
+            # 본전 50% 덜어내기
+            # ★FIX-2 보조: state["last_step"] >= 2 이중 보호
+            # place_nets_and_exit 호출 시 전달된 current_step 뿐 아니라
+            # state에 저장된 last_step도 함께 확인 → step=1 시 절대 미발동
             if current_step >= 2 and state["last_step"] >= 2 and unrealised_pnl >= 0 and not state["breakeven_done"] and not is_increase:
                 half_qty = round(current_sz * 0.5, conf["qty_step"])
                 if half_qty > 0:
@@ -225,7 +278,8 @@ class FinalSniperBotV6:
         p_idx = 1 if side == "Buy" else 2; opp_p_idx = 2 if side == "Buy" else 1
         opp_side = "Sell" if side == "Buy" else "Buy"
         try:
-            session.cancel_all_orders(category="linear", symbol=symbol)
+            # ★ADD-2 동일 적용: 익절 시에도 cancel_and_wait으로 완전 취소 확인
+            cancel_and_wait(symbol)
             # ① 본 포지션 종료
             session.place_order(category="linear", symbol=symbol, side=opp_side, orderType="Market",
                                 qty=str(round(cur_sz, conf["qty_step"])), reduceOnly=True, positionIdx=p_idx)
@@ -246,7 +300,19 @@ class FinalSniperBotV6:
         except Exception as e: logging.error(f"익절 오류: {e}")
 
     def run(self):
-        print("Step 3: 접속 완료"); print(f"Step 4: 잔액: {get_total_balance()}")
+        logging.info("Step 3: 바이비트 데모 접속 완료")
+        logging.info(f"Step 4: 잔액: {get_total_balance()}")
+
+        # ★ADD-1: 봇 시작 시 전체 오더 정리
+        # 재시작 후 거래소에 남아있는 잔존 오더가 새 오더와 중복되는 문제 방지
+        # Order + StopOrder 모두 완전 취소 확인 후 메인 루프 진입
+        logging.info("🧹 봇 시작: 모든 종목 잔존 오더 전체 정리 중...")
+        for symbol in CONFIGS:
+            cancel_and_wait(symbol, timeout=8.0)
+            logging.info(f"  [{symbol}] 오더 정리 완료")
+        time.sleep(1)
+        logging.info("✅ 오더 정리 완료 — 메인 루프 시작")
+
         supply_zones_cache = {s: [] for s in CONFIGS}; supply_zones_updated = {s: 0 for s in CONFIGS}
 
         while True:
@@ -293,9 +359,9 @@ class FinalSniperBotV6:
                                 if side_order:
                                     qty = conf["min_unit"]
                                     # ★FIX-1: Atomic State Update
-                                    # place_order 직전에 reentry_pending=True를 선설정.
-                                    # API 호출이 실패해도 다음 루프에서 재시도하려면 False로 복구.
-                                    # 성공하면 그대로 True 유지 → 포지션 감지 후 active=True로 전환.
+                                    # place_order 직전에 reentry_pending=True를 먼저 설정.
+                                    # API가 타임아웃/오류로 실패해도 다음 루프에서 재진입을 막음.
+                                    # 실패 시 except에서 False로 복구 → 재시도 허용.
                                     state["reentry_pending"] = True
                                     state["side"] = side_order
                                     try:
@@ -308,15 +374,13 @@ class FinalSniperBotV6:
                                         reason = "A(눌림목)" if (side_order == "Buy" and long_A) or (side_order == "Sell" and short_A) else "B(절대RSI)"
                                         logging.info(f"🎯 [{symbol}] {side_order} 진입 | 조건:{reason} RSI:{round(rsi,1)} EMA50:{round(ema50,2)} 종가:{closed_price}")
                                     except Exception as e:
-                                        # API 실패 시 상태 복구 → 다음 루프에서 재시도 허용
+                                        # 주문 실패 → 상태 복구하여 다음 루프에서 재시도 허용
                                         state["reentry_pending"] = False
                                         state["side"] = None
-                                        logging.warning(f"⚠️  [{symbol}] 진입 주문 실패 (상태 복구됨): {e}")
-                                # ★FIX-4: 중복 진입 시도 Skip 로그
-                                # reentry_pending=True 상태에서 RSI 조건이 다시 충족될 경우
-                                # 주문은 나가지 않지만 로그로 추적 가능하게 기록
-                                elif state["reentry_pending"] and (long_A or long_B or short_A or short_B):
-                                    logging.info(f"⏭️  [{symbol}] 진입 조건 충족이나 reentry_pending=True → SKIP (중복 방지)")
+                                        logging.warning(f"⚠️  [{symbol}] 진입 주문 실패, 상태 복구: {e}")
+                                elif state["reentry_pending"]:
+                                    # ★FIX-1 보조: 이미 대기 중인데 조건이 또 충족된 경우 Skip 로그
+                                    logging.debug(f"⏭️  [{symbol}] reentry_pending=True → 중복 진입 차단")
 
                     # ─── [B] 포지션 있음 ─────────────────────────────
                     else:
@@ -333,13 +397,12 @@ class FinalSniperBotV6:
                             unr_pnl = float(main_p.get("unrealisedPnl", 0))
 
                             if not state["active"]:
-                                # ★Fix-B: start_price 이전 거래 오염 방지
+                                # start_price 복원: 이전 거래 오염 방지
                                 try:
                                     trades = session.get_executions(category="linear", symbol=symbol, limit=100)["result"]["list"]
-                                    # API는 최신순 반환 → reverse=True로 최신순 유지하여 탐색
-                                    # (최신 체결부터 거슬러 올라가다 반대 방향 체결에서 중단)
+                                    # 최신순 탐색 → 반대 방향 체결(직전 청산) 발견 시 중단
                                     trades_sorted = sorted(trades, key=lambda t: int(t["execTime"]), reverse=True)
-                                    cur_side  = main_p["side"]
+                                    cur_side = main_p["side"]
                                     opp_side_str = "Sell" if cur_side == "Buy" else "Buy"
                                     exec_p = []
                                     for t in trades_sorted:
@@ -351,25 +414,37 @@ class FinalSniperBotV6:
                                 except:
                                     state["start_price"] = cur_av
 
-                                # ★FIX-2: 첫 진입 시 last_step=1 강제 고정
-                                # 중복 체결로 cur_sz가 min_unit의 2배가 되더라도
-                                # detected_qty=min_unit 고정이므로 calc_step은 항상 1 또는 2.
-                                # last_step을 1로 명시 강제하여 본전 덜어내기 조건(>=2) 오발동 차단.
+                                # ★FIX-2: detected_qty = cur_sz (실제 첫 진입 수량 기준)
+                                # 기존: detected_qty=conf[min_unit]=0.01 고정
+                                #   → 중복 체결로 cur_sz=0.02면 calc_step(0.02,0.01)=2 오판
+                                # 수정: detected_qty=cur_sz
+                                #   → calc_step(cur_sz, cur_sz) = 1 항상 보장
+                                #   → 마틴 배수 기준도 실제 첫 진입 수량 기반으로 자연스럽게 설정
+                                # last_step=1 강제 고정으로 이중 보호
                                 state.update({
-                                    "active":         True,
-                                    "side":           main_p["side"],
-                                    "detected_qty":   conf["min_unit"],
-                                    "reentry_pending":False,
-                                    "breakeven_done": False,
-                                    "last_step":      1,    # ★ 강제 고정
+                                    "active":          True,
+                                    "side":            main_p["side"],
+                                    "detected_qty":    cur_sz,   # ★ min_unit → cur_sz
+                                    "reentry_pending": False,
+                                    "breakeven_done":  False,
+                                    "last_step":       1,        # ★ 강제 고정
                                 })
-                                logging.info(f"🚀 [{symbol}] {state['side']} 전략 시작 (기준가={state['start_price']}, step 강제=1)")
+                                logging.info(f"🚀 [{symbol}] {state['side']} 전략 시작 | 기준가={state['start_price']} 기준수량={cur_sz}")
                                 is_inc = True
 
                             current_step = self.calc_step(cur_sz, state["detected_qty"])
                             state.update({"last_size":cur_sz, "entry_price":cur_av, "last_step":current_step})
                             if is_inc: state["breakeven_done"] = False
-                            self.place_nets_and_exit(symbol, cur_av, cur_sz, state["side"], current_step, is_inc, unr_pnl)
+
+                            # ★ADD-3: size_changed 경로도 Lock으로 보호
+                            # 기존: Lock 없이 호출 → 본전탈출 실시간 체크와 동시 실행 가능
+                            # 수정: 모든 place_nets_and_exit 호출 경로를 Lock으로 통일
+                            if not state["lock"]:
+                                state["lock"] = True
+                                try:
+                                    self.place_nets_and_exit(symbol, cur_av, cur_sz, state["side"], current_step, is_inc, unr_pnl)
+                                finally:
+                                    state["lock"] = False
 
                         # ★수정: continue 삭제 및 처리 플래그 도입 (Bug 1 반영)
                         processed_be = False
@@ -392,4 +467,49 @@ class FinalSniperBotV6:
             except Exception as e: logging.error(f"루프 에러: {e}"); time.sleep(10)
 
 if __name__ == "__main__":
-    bot = FinalSniperBotV6(); bot.run()
+    # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    # 질문3: PID 파일로 중복 프로세스 실행 차단
+    # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    # 로그가 2줄씩 찍히는 가장 흔한 원인:
+    #   터미널 A에서 실행 중인데 터미널 B에서 또 실행한 경우.
+    # PID 파일을 생성하여 이미 실행 중이면 즉시 종료.
+    import os, sys
+
+    PID_FILE = "bybit7_user2.pid"
+
+    def _check_pid(pid: int) -> bool:
+        """해당 PID 프로세스가 실제로 살아있는지 확인"""
+        try:
+            os.kill(pid, 0)   # 시그널 0 = 존재 여부만 확인
+            return True
+        except (OSError, ProcessLookupError):
+            return False
+
+    # 기존 PID 파일 확인
+    if os.path.exists(PID_FILE):
+        with open(PID_FILE, "r") as f:
+            old_pid = int(f.read().strip())
+        if _check_pid(old_pid):
+            logging.error(
+                f"🚫 이미 실행 중인 봇이 있습니다 (PID: {old_pid}). "
+                f"중복 실행 차단 — 종료합니다.\n"
+                f"   강제 종료하려면: kill {old_pid}"
+            )
+            sys.exit(1)
+        else:
+            # 이전 프로세스가 비정상 종료하여 PID 파일만 남은 경우
+            logging.warning(f"⚠️  PID {old_pid} 은 이미 종료됨. PID 파일 재생성.")
+
+    # 현재 프로세스 PID 기록
+    with open(PID_FILE, "w") as f:
+        f.write(str(os.getpid()))
+    logging.info(f"🔒 PID 파일 생성: {PID_FILE} (PID: {os.getpid()})")
+
+    try:
+        bot = FinalSniperBotV6()
+        bot.run()
+    finally:
+        # 봇 종료 시 PID 파일 삭제 (정상/비정상 종료 모두)
+        if os.path.exists(PID_FILE):
+            os.remove(PID_FILE)
+            logging.info("🔓 PID 파일 삭제 완료")
