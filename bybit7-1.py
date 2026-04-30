@@ -41,10 +41,10 @@ from pybit.unified_trading import HTTP
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # [1] 설정
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-API_KEY        = "MZxVDs6SlVHsDndKXE"
-API_SECRET     = "ba3OlKPxWgdMjEVddU844DrAREqWY3MgRVVv"
-TELEGRAM_TOKEN = ""  
-CHAT_ID        = ""  
+API_KEY = "O1QpHJH4wdsjPiCe1x"
+API_SECRET = "XdHD6eGaNz1iSnLF0j6nVEETZMDiSvGnai75"
+TELEGRAM_TOKEN = "8750597756:AAHRCFpsftkHRZErKh10G1xW8PmawwXieGQ"
+CHAT_ID = "6931693139"
 
 session = HTTP(
     testnet=False,
