@@ -1,31 +1,25 @@
 """
-FinalSniperBotV6 - 클로드 6차 검수 최종 수정판
+FinalSniperBotV7 - 클로드 7차 검수 최종 수정판
 ══════════════════════════════════════════════════
-[5차까지 누적 반영 확인]
+[V6까지 누적 반영 확인]
   ✅ Atomic State Update (reentry_pending 선설정)
   ✅ detected_qty=cur_sz / last_step=1 강제 고정
   ✅ orderFilter Order+StopOrder 명시 취소
   ✅ if not main_p 내 진입 로직 / ema50>0 방어
   ✅ calc_step 0.95 / limit=200 / processed_be 플래그
+  ✅ 중복 오더 완전 차단 3계층 방어 (ADD-1~3)
 
-[6차 신규 수정 — 중복 오더 완전 차단 3계층 방어]
+[V7 신규 수정 — start_price 로직 단순화]
 
-  🔴 ADD-1: 봇 시작 시 전체 오더 정리 (재시작 잔존 오더 제거)
-            봇 재시작 후 거래소에 남아있던 오더가 새 오더와 중복되는 문제 해결
-            run() 최상단에서 모든 종목 Order+StopOrder 완전 취소 후 진입
-
-  🔴 ADD-2: cancel_and_wait() 함수 신설 (취소 완료 확인 후 배치)
-            기존: 취소 명령 후 1.5초 고정 대기 (취소 완료 미확인)
-            수정: 0.5초 간격 폴링으로 Order+StopOrder 양쪽 0개 확인 후 배치
-            타임아웃 6초 설정, 개별 필터 확인으로 완전 소멸 보장
-
-  🔴 ADD-3: place_nets_and_exit 모든 호출 경로에 Lock 통일
-            기존: size_changed 경로는 Lock 없이 호출
-                  본전탈출 실시간 체크와 동시 실행 가능 → 오더 중복
-            수정: 모든 호출 경로를 state["lock"]으로 보호
-
-[확인 사항]
-  ℹ️  헷지 주문: Bybit V5 orderType="Market" + triggerPrice → 조건부 스탑 처리
+  🔴 FIX: get_executions 역추적 로직 완전 제거 및 avgPrice 직접 고정
+            [문제] 숏 진입 시 get_executions의 min(exec_price)를 start_price로 사용.
+                   슬리피지·이전 거래 잔존 데이터 오염으로 실제 평단가(예: 77,195)보다
+                   훨씬 낮은 가격을 기준가로 오판 → 2차 거미줄 오더가 잘못된 위치에 배치.
+                   (실제 사례: 평단 77,195 / 설정 간격 1,200 / 실제 2차 오더 77,355 = 약 200불 차이)
+            [수정] 포지션이 처음 감지되는 시점(if not state["active"])에
+                   API가 반환하는 현재 포지션의 평균단가(avgPrice)를
+                   state["start_price"]로 즉시 할당. 롱/숏 동일하게 적용.
+            [효과] 실제 잡힌 평단가로부터 정확한 intervals 간격으로 거미줄 보장.
 """
 
 logging.info("Step 1: 프로그램 로딩 시작...")
@@ -165,7 +159,7 @@ def cancel_and_wait(symbol: str, timeout: float = 6.0) -> bool:
 # [3] 메인 봇 클래스
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-class FinalSniperBotV6:
+class FinalSniperBotV7:
     def __init__(self):
         self.states = {
             s: {
@@ -397,22 +391,18 @@ class FinalSniperBotV6:
                             unr_pnl = float(main_p.get("unrealisedPnl", 0))
 
                             if not state["active"]:
-                                # start_price 복원: 이전 거래 오염 방지
-                                try:
-                                    trades = session.get_executions(category="linear", symbol=symbol, limit=100)["result"]["list"]
-                                    # 최신순 탐색 → 반대 방향 체결(직전 청산) 발견 시 중단
-                                    trades_sorted = sorted(trades, key=lambda t: int(t["execTime"]), reverse=True)
-                                    cur_side = main_p["side"]
-                                    opp_side_str = "Sell" if cur_side == "Buy" else "Buy"
-                                    exec_p = []
-                                    for t in trades_sorted:
-                                        if t["side"] == opp_side_str:
-                                            break
-                                        if t["side"] == cur_side:
-                                            exec_p.append(float(t["execPrice"]))
-                                    state["start_price"] = (max(exec_p) if cur_side == "Buy" else min(exec_p)) if exec_p else cur_av
-                                except:
-                                    state["start_price"] = cur_av
+                                # ★V7 FIX: start_price 로직 단순화
+                                # ─────────────────────────────────────────────────────
+                                # [구 로직 제거] get_executions로 체결가를 역추적하던 방식 삭제.
+                                #   문제: 숏 진입 시 min(exec_p)를 기준가로 잡아,
+                                #         슬리피지·이전 거래 잔존 데이터 오염으로
+                                #         실제 평단가(예: 77,195)보다 훨씬 낮은 가격을
+                                #         start_price로 오판 → 2차 오더가 잘못된 위치에 배치됨.
+                                # [신 로직] 포지션이 처음 감지되는 순간,
+                                #   거래소 API가 반환하는 현재 포지션의 평균단가(avgPrice)를
+                                #   start_price로 즉시 고정. 롱/숏 동일하게 적용.
+                                #   → 실제 잡힌 평단가로부터 정확한 intervals 간격으로 거미줄 보장.
+                                state["start_price"] = cur_av
 
                                 # ★FIX-2: detected_qty = cur_sz (실제 첫 진입 수량 기준)
                                 # 기존: detected_qty=conf[min_unit]=0.01 고정
@@ -506,7 +496,7 @@ if __name__ == "__main__":
     logging.info(f"🔒 PID 파일 생성: {PID_FILE} (PID: {os.getpid()})")
 
     try:
-        bot = FinalSniperBotV6()
+        bot = FinalSniperBotV7()
         bot.run()
     finally:
         # 봇 종료 시 PID 파일 삭제 (정상/비정상 종료 모두)
