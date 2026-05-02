@@ -7,8 +7,18 @@ LOG_FILE = "user2_bybit7.log"
 K, S = "MZxVDs6SlVHsDndKXE", "ba3OlKPxWgdMjEVddU844DrAREqWY3MgRVVv"
 ss = HTTP(testnet=False, demo=True, api_key=K, api_secret=S)
 
-st.set_page_config(page_title="Sniper Pro Monitor v8.7.8", layout="wide")
-st_autorefresh(interval=10000, key="refresh_v8_7_8")
+# ★ 종목별 기준 비중 설정 (추가된 부분)
+UNIT_MAP = {
+    "BTCUSDT": 0.01,
+    "XAUUSDT": 0.2,
+    "ETHUSDT": 0.2,
+    "SOLUSDT": 6.0,
+    "XAGUSDT": 7.0,
+    "DOGEUSDT": 5000.0
+}
+
+st.set_page_config(page_title="Sniper Pro Monitor v8.7.9", layout="wide")
+st_autorefresh(interval=10000, key="refresh_v8_7_9")
 
 # [2. CSS 스타일]
 st.markdown("""
@@ -47,7 +57,7 @@ def get_margin_balance():
     except: return "$0.00"
 
 def get_live_status():
-    """상단 실시간 상태 (수익금 색상 강조 적용)"""
+    """상단 실시간 상태 (수익금 색상 강조 및 종목별 Step 계산 적용)"""
     try:
         now = datetime.datetime.now().strftime('%m-%d %H:%M:%S')
         pos_res = ss.get_positions(category="linear", settleCoin="USDT")['result']['list']
@@ -57,13 +67,14 @@ def get_live_status():
             if sz > 0:
                 sym = p['symbol']; side = f"({p['side']})"
                 
-                # 수익금 계산 및 색상 결정 (요청하신 부분)
                 pnl_val = float(p.get('unrealisedPnl', 0))
-                pnl_color = "#00ff00" if pnl_val >= 0 else "#ff4b4b" # 양수 초록 / 음수 빨강
+                pnl_color = "#00ff00" if pnl_val >= 0 else "#ff4b4b"
                 pnl_html = f"<span style='color:{pnl_color}; font-weight:bold;'>{pnl_val:>7.1f}$</span>"
                 
                 avg = f"{float(p.get('avgPrice', 0)):.1f}"
-                base = 0.01 if "BTC" in sym else 0.2
+                
+                # ★ 종목별 base_qty를 UNIT_MAP에서 가져와 Step 계산 (수정된 핵심 로직)
+                base = UNIT_MAP.get(sym, 0.01)
                 step = 1; ratio = sz / base
                 for s in range(1, 8):
                     if ratio >= (2**(s-1)) * 0.9: step = s
@@ -84,15 +95,15 @@ def format_log_line(line):
 
     if "🎯" in line:
         rsi = re.search(r'RSI:([\d.]+)', line); price = re.search(r'종가:([\d.]+)', line)
-        qty = "0.01" if "BTC" in line else "0.2"
+        # ★ 로그 출력 시에도 UNIT_MAP의 비중을 가져옴
+        qty = str(UNIT_MAP.get(symbol_raw, "---"))
         rsi_val = f"RSI:{float(rsi.group(1)):.1f}" if rsi else "----"
         p_val = price.group(1) if price else "----"
         return f"<div class='log-entry'>{timestamp} 🎯 {symbol} 진입 성공 | {qty:<5} | {rsi_val} | 가격:{p_val}</div>"
     if any(k in line for k in ["💰", "익절 완료", "전략 종료"]):
         return f"<div class='log-tp'>{timestamp} 💰 {symbol} 전략 종료 - 익절 완료</div>"
     if any(k in line for k in ["📉", "본전", "덜어내기"]):
-        reduce_qty = "0.005" if "BTC" in line else "0.1"
-        return f"<div class='log-reduce'>{timestamp} 📉 {symbol} 리스크 관리: 50% 덜어내기 (-{reduce_qty})</div>"
+        return f"<div class='log-reduce'>{timestamp} 📉 {symbol} 리스크 관리: 50% 덜어내기 완료</div>"
     if any(k in line for k in ["🚀", "Step", "체결!"]):
         msg = line.split(" - ")[-1] if " - " in line else line
         icon = "🚀" if "🚀" in line else "⚙️"
@@ -134,4 +145,4 @@ st.markdown(f"""
 </div>
 """, unsafe_allow_html=True)
 
-st.caption(f"Last Updated: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')} | Sniper Pro v8.7.8 (Color Fixed)")
+st.caption(f"Last Updated: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')} | Sniper Pro v8.7.9 (Multi-Weight Applied)")

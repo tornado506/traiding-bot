@@ -69,6 +69,17 @@ session = HTTP(
 CONFIGS = {
     "BTCUSDT": {"intervals": [1200, 1200, 1200, 1600, 1600, 2000], "tick_size": 1, "qty_step": 3, "min_unit": 0.01},
     "XAUUSDT": {"intervals": [60,   60,   60,   90,   90,   120],  "tick_size": 2, "qty_step": 2, "min_unit": 0.2},
+            # [70%] 이더리움: 약 $540 가치 (시세 $2,500 기준 0.22개)
+    "ETHUSDT": {"intervals": [80, 80, 80, 120, 120, 150], "tick_size": 2, "qty_step": 2, "min_unit": 0.2},
+
+    # [70%] 솔라나: 약 $548 가치 (시세 $84.0 기준)
+    "SOLUSDT": {"intervals": [1.2, 1.2, 1.2, 1.8, 1.8, 2.5], "tick_size": 3, "qty_step": 1, "min_unit": 6},
+
+    # [70%] 실버: 약 $548 가치 (시세 $75.4 기준)
+    "XAGUSDT": {"intervals": [1.1, 1.1, 1.1, 1.5, 1.5, 2.0], "tick_size": 3, "qty_step": 1, "min_unit": 7},
+
+    # [70%] 도지코인: 약 $548 가치 (시세 $0.108 기준)
+    "DOGEUSDT": {"intervals": [0.0016, 0.0016, 0.0016, 0.0025, 0.0025, 0.003], "tick_size": 5, "qty_step": 0, "min_unit": 5000},
 }
 
 MAX_STEP          = 7
