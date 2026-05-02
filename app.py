@@ -1,5 +1,3 @@
-# --- START OF FILE app.py ---
-
 import io, os, re, time
 from datetime import datetime
 import matplotlib
@@ -13,120 +11,114 @@ from streamlit_autorefresh import st_autorefresh
 # 서버용 렌더링 설정
 matplotlib.use("Agg")
 
-# [1. 설정 및 연결 - 내 계정 정보]
+# [1. 설정 및 연결]
 K, S = "O1QpHJH4wdsjPiCe1x", "XdHD6eGaNz1iSnLF0j6nVEETZMDiSvGnai75"
 ss = HTTP(testnet=False, demo=True, api_key=K, api_secret=S)
 ss.endpoint = "https://api-demo.bybit.com"
 
-# ★ 로그 파일 설정
 LOG_FILES = {"PAIR": "pair_bot.log", "BYBIT5": "bybit7.log"}
 
-# ★ 사용자 지정 종목별 진입 비중 (Step 계산용)
 CONFIGS = {
-    "BTCUSDT":  {"min_unit": 0.01},
-    "XAUUSDT":  {"min_unit": 0.2},
-    "ETHUSDT":  {"min_unit": 0.2},
-    "SOLUSDT":  {"min_unit": 6.0},
-    "XAGUSDT":  {"min_unit": 7.0},
-    "DOGEUSDT": {"min_unit": 5000.0},
+    "BTCUSDT":  {"half_unit": 0.051},
+    "XAUUSDT":  {"half_unit": 0.86},
+    "ETHUSDT":  {"half_unit": 1.73},
+    "SOLUSDT":  {"half_unit": 47.6},
+    "XAGUSDT":  {"half_unit": 53.0},
+    "DOGEUSDT": {"half_unit": 37000.0},
 }
 
-# ★ 그래프 사이즈 30% 축소 유지
-CHART_SIZE = (10.5, 4.0) 
+CHART_SIZE = (10.5, 3.5) 
 FEE_RATE = 0.0007 
 
-st.set_page_config(page_title="Sniper Pro Monitor v9.2", layout="wide")
-st_autorefresh(interval=10000, key="refresh_v92")
+st.set_page_config(page_title="Sniper Bot Monitor v11.9", layout="wide")
+st_autorefresh(interval=10000, key="refresh_v11_9_final")
 
-# [2. CSS 스타일 - 모바일 상하좌우 드래그 및 디자인]
+# [2. CSS 스타일 - 제목 크기 확대 및 모든 헤더 흰색]
 st.markdown(
     """
     <style>
     .stApp {background-color: #0e1117 !important;}
     [data-testid="stHeader"], [data-testid="stToolbar"] {display: none !important;}
-    .block-container {padding-top: 0.5rem !important; max-width: 98% !important;}
-    * {color: #ffffff !important; font-family: 'Courier New', monospace;}
+    .block-container {padding-top: 0.3rem !important; max-width: 98% !important;}
+    * {font-family: 'Courier New', monospace;}
     
+    /* ★ 메인 제목: 흰색 및 크기 확대 (32px) ★ */
     .main-title {
-        color: #00ffc8 !important;
-        font-size: 22px !important;
+        color: #ffffff !important;
+        font-size: 32px !important;
         font-weight: bold !important;
+        margin-bottom: 25px !important; /* 아래 여백 추가 */
+        text-align: center;
+    }
+
+    /* ★ 모든 섹션 제목: 흰색 (#ffffff) ★ */
+    h2, h4, .section-header {
+        color: #ffffff !important; 
+        font-weight: bold !important; 
+        font-size: 18px !important; 
+        margin-top: 15px !important;
         margin-bottom: 10px !important;
     }
 
     .total-balance-card {
         background: linear-gradient(135deg, #1e2631 0%, #0e1117 100%);
-        padding: 15px; border-radius: 15px; text-align: center;
-        border: 1px solid #3e4452; margin-bottom: 15px;
+        padding: 15px; border-radius: 12px; text-align: center;
+        border: 1px solid #3e4452; 
+        margin-bottom: 30px !important; /* 자산 카드 아래 여백 확대 */
     }
+    .equity-label { color: #8b949e !important; font-size: 11px !important; }
+    .equity-value { color: #ffffff !important; font-size: 28px !important; font-weight: bold !important; }
     
-    .asset-card {
-        background-color: #161b22; padding: 12px; border-radius: 12px;
-        border: 1px solid #30363d; margin-bottom: 10px;
-    }
-    .symbol-name { font-size: 15px; font-weight: bold; color: #00ffc8; }
-    .net-profit { font-size: 18px; font-weight: bold; margin: 3px 0; }
-    .plus { color: #00ff00 !important; }
-    .minus { color: #ff4b4b !important; }
-    
-    /* ★ 로그 박스 테두리 제거 및 상하좌우 드래그 기능 ★ */
     .clean-log {
         background-color: #000000 !important; 
         color: #00ffc8 !important;
         padding: 10px !important; 
-        border: none !important; /* 테두리 박스줄 제거 */
-        white-space: pre !important; /* 가로줄 유지 */
-        overflow: auto !important; /* 상하좌우 스크롤 */
+        border: none !important; 
+        white-space: pre !important; 
+        overflow: auto !important; 
         -webkit-overflow-scrolling: touch !important;
-        font-size: 14px !important; 
-        line-height: 1.5 !important;
-        height: 400px !important; 
-        margin-bottom: 25px;
+        font-size: 13px !important; 
+        line-height: 1.4 !important;
+        height: 380px !important; 
+        margin-bottom: 35px;
     }
+    .pair-log { color: #ff9800 !important; border-left: 3.2px solid #ff9800 !important; }
     
-    .pair-log { color: #ffcc00 !important; border-left: 3px solid #ffcc00 !important; }
-    
-    h2, h4 {color: #00ffc8 !important; font-weight: bold !important; margin-top: 5px !important;}
-    hr {border-top: 1px solid #333; margin: 20px 0;}
-    ::-webkit-scrollbar { width: 0px; height: 0px; } /* 스크롤바 숨김 */
+    hr {border-top: 1px solid #333; margin: 25px 0;}
+    ::-webkit-scrollbar { width: 0px; height: 0px; }
     </style>
     """,
     unsafe_allow_html=True,
 )
 
-# --- [3] 데이터 함수 ---
+# --- [3] 데이터 처리 함수 ---
 
-def get_live_data():
+def get_margin_balance():
     try:
-        bal = ss.get_wallet_balance(accountType="UNIFIED", coin="USDT")['result']['list'][0]
-        # 사진에 나온 Margin Balance(가용 자산)를 가져옵니다.
-        equity = float(bal.get('totalMarginBalance', bal['totalEquity']))
-        
+        res = ss.get_wallet_balance(accountType="UNIFIED", coin="USDT")
+        return f"${float(res['result']['list'][0]['totalMarginBalance']):,.2f}"
+    except: return "$0.00"
+
+def get_live_status():
+    try:
+        # 월-일 시:분:초 표시
+        now = datetime.now().strftime('%m-%d %H:%M:%S')
         pos_res = ss.get_positions(category="linear", settleCoin="USDT")['result']['list']
-        active_pos = []
-        status_lines = []
-        now_time = datetime.now().strftime('%m-%d %H:%M:%S')
-        
+        lines = []
         for p in pos_res:
             sz = float(p.get("size", 0))
             if sz > 0:
-                sym, side = p['symbol'], p['side']
-                avg = float(p['avgPrice'])
-                pnl = float(p['unrealisedPnl'])
-                
-                # ★ 종목별 설정값(min_unit) 적용하여 Step 계산
-                base = CONFIGS.get(sym, {}).get("min_unit", 0.01)
-                step = 1
-                ratio = sz / base
-                for s in range(1, 8):
-                    if ratio >= (2**(s-1)) * 0.9: step = s
-                
-                active_pos.append({"sym": sym, "side": side, "net": pnl, "step": step, "avg": avg})
-                status_lines.append(f"[{now_time}] 🛰️ {sym:10}({side:4}) | Net:{round(pnl, 1):>6}$ | {step}Step | Qty:{sz:<7} | Avg:{avg}")
-        
-        header = "\n".join(status_lines) if status_lines else f"[{now_time}] 🛰️ 현재 오픈된 포지션이 없습니다."
-        return equity, active_pos, header
-    except: return 0, [], "Data Error"
+                sym = p['symbol']; side = f"({p['side']})"
+                pnl = float(p.get('unrealisedPnl', 0))
+                pnl_color = "#00ff00" if pnl >= 0 else "#ff4b4b"
+                pnl_html = f"<span style='color:{pnl_color}; font-weight:bold;'>{pnl:>7.1f}$</span>"
+                avg = f"{float(p.get('avgPrice', 0)):.1f}"
+                base = CONFIGS.get(sym, {}).get("half_unit", 0.01)
+                step_label = "Full" if sz >= base * 1.5 else "Half"
+                line = f"[{now}] 🛰️ {sym:<10} {side:<6} | Net: {pnl_html} | {step_label} | Qty: {sz:<7} | Avg: {avg}"
+                lines.append(f"<div>{line}</div>")
+        return "".join(lines) if lines else f"<div>[{now}] 🛰️ 현재 오픈된 포지션이 없습니다.</div>"
+    except: return "<div class='status-text'>🛰️ API 연결 대기 중...</div>"
 
 @st.cache_data(ttl=10)
 def get_kline(sym, itv, lim):
@@ -153,85 +145,81 @@ def draw_pair_chart(s1, s2, c1, c2, title, interval):
 
 def get_final_logs(path, log_type="PAIR_RAW", limit=150):
     if not os.path.exists(path): return "로그 파일 대기 중..."
+    today_mm_dd = datetime.now().strftime('%m-%d')
     try:
         with open(path, "r", encoding="utf-8", errors="ignore") as f:
             lines = f.readlines()
             processed = []
             seen = set()
-            monitor_count = 0
-            
             for l in reversed(lines):
                 line = l.strip()
                 if not line or "nohup" in line or "매물대" in line or "에러" in line: continue
 
-                # 로그에서 시간(HH:MM:SS)과 메시지 내용을 분리 추출
-                time_match = re.search(r'(\d{2}:\d{2}:\d{2})', line)
+                # ★ 정밀 시간 추출 (MM-DD 포함) ★
+                time_match = re.search(r'(\d{4})-(\d{2})-(\d{2}) (\d{2}:\d{2}:\d{2})', line)
                 if time_match:
-                    display_time = time_match.group(1)
-                    # " - " 이후의 실제 내용만 가져오기 (중복 시간 방지)
-                    parts = line.split(" - ")
-                    msg = parts[-1] if len(parts) > 1 else line
-                    # 만약 메시지 안에 또 [09:30] 같은 시간이 들어있으면 제거
-                    msg = re.sub(r'\[\d{2}:\d{2}:\d{2}\]\s*', '', msg).strip()
-                    display_line = f"[{display_time}] {msg}"
+                    # YYYY-MM-DD HH:MM:SS 형태일 때
+                    display_time = f"{time_match.group(2)}-{time_match.group(3)} {time_match.group(4)}"
                 else:
-                    display_line = line
+                    # [HH:MM:SS] 형태일 때 (오늘 날짜 강제 주입)
+                    only_time = re.search(r'(\d{2}:\d{2}:\d{2})', line)
+                    if only_time:
+                        display_time = f"{today_mm_dd} {only_time.group(1)}"
+                    else:
+                        display_time = "Unknown"
 
-                is_event = any(icon in line for icon in ["🎯", "💰", "🚀", "익절", "진입"])
+                msg = line.split(" - ")[-1] if " - " in line else line
+                # 메시지 내부의 대괄호 시간 제거
+                msg = re.sub(r'\[\d{2}:\d{2}:\d{2}\]\s*', '', msg).strip()
+                msg = re.sub(r'\[\d{4}-\d{2}-\d{2}.*?\]\s*', '', msg).strip()
                 
-                if log_type == "PAIR_RAW":
-                    if "🔎" in line:
-                        monitor_count += 1
-                        if monitor_count > 5 and not is_event: continue
+                display_line = f"[{display_time}] {msg}"
 
-                # 중복 제거 (시간 제외 내용 기준)
-                content_only = re.sub(r'\[.*?\]', '', display_line).strip()
-                if content_only in seen and not is_event: continue
-                seen.add(content_only)
-
+                content = re.sub(r'\[.*?\]', '', display_line).strip()
+                if content in seen: continue
+                seen.add(content)
                 processed.append(display_line)
                 if len(processed) >= limit: break
-            return "\n".join(processed)
+            
+            return "\n\n" + "\n".join(processed)
     except: return "Log Error"
 
 # --- [4] 화면 렌더링 ---
 
-st.markdown('<div class="main-title">🤖 Sniper Bot Monitor v9.2</div>', unsafe_allow_html=True)
+# 1. 메인 제목 (흰색, 크게)
+st.markdown('<div class="main-title">🤖 Sniper Bot Monitor v11.9</div>', unsafe_allow_html=True)
 
-# 1. 자산 카드
-equity, positions, b5_live_header = get_live_data()
-st.markdown(f"""<div class="total-balance-card"><p style="color: #8b949e; font-size:12px;">My Total Equity (Margin Balance)</p><h1 style="color: white; font-size: 32px;">${equity:,.2f}</h1></div>""", unsafe_allow_html=True)
+# 2. 자산 카드 (아래 여백 추가)
+current_equity = get_margin_balance()
+st.markdown(f"""
+    <div class="total-balance-card">
+        <div class="equity-label">Total Equity (Margin Balance)</div>
+        <div class="equity-value">{current_equity}</div>
+    </div>
+    """, unsafe_allow_html=True)
 
-# 2. 포지션 카드
-if positions:
-    cols = st.columns(len(positions))
-    for i, p in enumerate(positions):
-        pnl_class = "plus" if p['net'] >= 0 else "minus"
-        with cols[i]:
-            st.markdown(f"""<div class="asset-card"><span class="symbol-name">{p['sym']}</span><div class="net-profit {pnl_class}">${p['net']:+.2f}</div><div style="color: #8b949e; font-size: 11px;">Entry: {p['avg']} | {p['step']} Step</div></div>""", unsafe_allow_html=True)
+# 3. 메인 봇 로그 (제목 흰색)
+st.markdown('<div class="section-header">🤖 Main Bot Trading History</div>', unsafe_allow_html=True)
+live_header = get_live_status()
+main_history = get_final_logs(LOG_FILES['BYBIT5'], "BYBIT5", limit=60)
+st.markdown(f"<div class='clean-log'>{live_header}\n{'-'*95}{main_history}</div>", unsafe_allow_html=True)
 
-# 3. 로그 섹션 (상하좌우 드래그 가능)
-st.subheader("🤖 Main Bot Trading History")
-bybit5_history = get_final_logs(LOG_FILES['BYBIT5'], "BYBIT5", limit=60)
-st.markdown(f"<div class='clean-log'>{b5_live_header}\n{'-'*100}\n{bybit5_history}</div>", unsafe_allow_html=True)
-
-st.subheader("⚖️ Pair Bot Trading History")
-pair_history = get_final_logs(LOG_FILES['PAIR'], "PAIR_RAW", limit=40)
+# 4. 페어봇 로그 (제목 흰색, 월-일 표시 수정 완료)
+st.markdown('<div class="section-header">⚖️ Pair Bot Trading History</div>', unsafe_allow_html=True)
+pair_history = get_final_logs(LOG_FILES['PAIR'], "PAIR_RAW", limit=100)
 st.markdown(f"<div class='clean-log pair-log'>{pair_history}</div>", unsafe_allow_html=True)
 
 st.markdown("<hr>", unsafe_allow_html=True)
 
-# 4. 분석 차트 섹션 (상-하 배치)
-st.subheader("📊 Market Analysis Charts")
-tf_choice = st.radio("Timeframe", ["15M", "1H"], horizontal=True, key="global_tf")
+# 5. 분석 차트 (제목 흰색, 수직 배치)
+st.markdown('<div class="section-header">📊 Market Analysis Charts</div>', unsafe_allow_html=True)
+tf_choice = st.radio("Chart Timeframe", ["15M", "1H"], horizontal=True, key="v11_9_tf")
 itv = "60" if tf_choice == "1H" else "15"
 
 img_crypto = draw_pair_chart("BTCUSDT", "ETHUSDT", "#007bff", "#dc3545", "CRYPTO Correl", itv)
 if img_crypto: st.image(img_crypto, use_container_width=True)
-
 st.markdown("<br>", unsafe_allow_html=True)
-
 img_metal = draw_pair_chart("XAUUSDT", "XAGUSDT", "#ffc107", "#6f42c1", "METALS Correl", itv)
 if img_metal: st.image(img_metal, use_container_width=True)
 
-st.caption(f"Last Update: {datetime.now().strftime('%m-%d %H:%M:%S')} | v9.2 Multi-Symbol Fixed")
+st.caption(f"Last Update: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} | v11.9 Full White Theme")
