@@ -152,31 +152,42 @@ def draw_pair_chart(s1, s2, c1, c2, title, interval):
     except: return None
 
 def get_final_logs(path, log_type="PAIR_RAW", limit=150):
-    if not os.path.exists(path): return "로그 대기 중..."
+    if not os.path.exists(path): return "로그 파일 대기 중..."
     try:
         with open(path, "r", encoding="utf-8", errors="ignore") as f:
             lines = f.readlines()
             processed = []
             seen = set()
+            monitor_count = 0
+            
             for l in reversed(lines):
                 line = l.strip()
-                if not line or "nohup" in line or "매물대" in line: continue
-                if "NoneType" in line or "에러" in line: continue 
+                if not line or "nohup" in line or "매물대" in line or "에러" in line: continue
 
-                # 로그 포맷 통일
-                time_match = re.search(r'\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}', line)
+                # 로그에서 시간(HH:MM:SS)과 메시지 내용을 분리 추출
+                time_match = re.search(r'(\d{2}:\d{2}:\d{2})', line)
                 if time_match:
-                    display_line = f"[{time_match.group(0)[5:19]}] {line.split(' - ')[-1]}"
-                else: display_line = line
+                    display_time = time_match.group(1)
+                    # " - " 이후의 실제 내용만 가져오기 (중복 시간 방지)
+                    parts = line.split(" - ")
+                    msg = parts[-1] if len(parts) > 1 else line
+                    # 만약 메시지 안에 또 [09:30] 같은 시간이 들어있으면 제거
+                    msg = re.sub(r'\[\d{2}:\d{2}:\d{2}\]\s*', '', msg).strip()
+                    display_line = f"[{display_time}] {msg}"
+                else:
+                    display_line = line
 
-                if log_type == "BYBIT5":
-                    keywords = ["🎯", "🚀", "💰", "📉", "본전", "Step", "익절 완료"]
-                    if not any(k in line for k in keywords): continue
+                is_event = any(icon in line for icon in ["🎯", "💰", "🚀", "익절", "진입"])
                 
-                # 중복 제거
-                content = re.sub(r'\[.*?\]', '', display_line).strip()
-                if content in seen: continue
-                seen.add(content)
+                if log_type == "PAIR_RAW":
+                    if "🔎" in line:
+                        monitor_count += 1
+                        if monitor_count > 5 and not is_event: continue
+
+                # 중복 제거 (시간 제외 내용 기준)
+                content_only = re.sub(r'\[.*?\]', '', display_line).strip()
+                if content_only in seen and not is_event: continue
+                seen.add(content_only)
 
                 processed.append(display_line)
                 if len(processed) >= limit: break
