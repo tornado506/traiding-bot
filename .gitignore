@@ -1,0 +1,7 @@
+*.log
+*.sh
+*.pid
+.DS_Store
+venv_mac/
+venv_mac/
+__pycache__/
