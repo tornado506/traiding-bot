@@ -22,18 +22,38 @@ FinalSniperBotV7 - 클로드 7차 검수 최종 수정판
             [효과] 실제 잡힌 평단가로부터 정확한 intervals 간격으로 거미줄 보장.
 """
 
-logging.info("Step 1: 프로그램 로딩 시작...")
-import time
 import logging
+import time
 import numpy as np
 import pandas as pd
 import requests
-logging.info("Step 2: 라이브러리 로드 완료")
 from pybit.unified_trading import HTTP
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-# [1] 설정
+# [1] 로깅 설정 (중복 방지 및 파일 저장 설정)
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+_logger = logging.getLogger()
+_logger.handlers.clear()                # 기존 핸들러 제거 (로그 중복 방지 핵심)
+_logger.setLevel(logging.INFO)
+_fmt = logging.Formatter('%(asctime)s - %(message)s')
+
+# 파일 저장 설정 (내 계정 전용 파일명: bybit7.log)
+_fh = logging.FileHandler("bybit7.log", encoding="utf-8")
+_fh.setFormatter(_fmt)
+
+# 터미널 실시간 출력 설정
+_sh = logging.StreamHandler()
+_sh.setFormatter(_fmt)
+
+_logger.addHandler(_fh)
+_logger.addHandler(_sh)
+
+# 이제 로그를 찍어도 에러가 나지 않습니다.
+logging.info("Step 1: 프로그램 로딩 시작...")
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# [1] 설정
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 API_KEY = "O1QpHJH4wdsjPiCe1x"
 API_SECRET = "XdHD6eGaNz1iSnLF0j6nVEETZMDiSvGnai75"
 TELEGRAM_TOKEN = "8750597756:AAHRCFpsftkHRZErKh10G1xW8PmawwXieGQ"
@@ -448,7 +468,7 @@ class FinalSniperBotV7:
                         if not processed_be: # 본전 덜어내기 직후면 이번 사이클 익절 스킵
                             round_trip_fee = cur_sz * cur_av * FEE_RATE * 2
                             net_pnl = unr_pnl - round_trip_fee
-                            multiplier = 5 if state["last_step"] <= 4 else 3
+                            multiplier = 3  # <--- 5에서 3으로 수정 (전 단계 수수료 3배 익절)
                             if net_pnl >= (round_trip_fee * multiplier) and not state["lock"]:
                                 state["lock"] = True
                                 try: self.do_take_profit(symbol, state["side"], cur_sz)
@@ -465,7 +485,7 @@ if __name__ == "__main__":
     # PID 파일을 생성하여 이미 실행 중이면 즉시 종료.
     import os, sys
 
-    PID_FILE = "bybit7_user2.pid"
+    PID_FILE = "bybit7.pid"
 
     def _check_pid(pid: int) -> bool:
         """해당 PID 프로세스가 실제로 살아있는지 확인"""
