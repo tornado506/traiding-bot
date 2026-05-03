@@ -184,23 +184,42 @@ def get_final_logs(path, log_type="PAIR_RAW", limit=150):
                 line = l.strip()
                 if not line or "nohup" in line or "매물대" in line or "에러" in line: continue
 
-                # ★ 정밀 시간 추출 (MM-DD 포함) ★
+                # 시간 추출 (MM-DD HH:MM:SS 유지)
                 time_match = re.search(r'(\d{4})-(\d{2})-(\d{2}) (\d{2}:\d{2}:\d{2})', line)
                 if time_match:
-                    # YYYY-MM-DD HH:MM:SS 형태일 때
                     display_time = f"{time_match.group(2)}-{time_match.group(3)} {time_match.group(4)}"
                 else:
-                    # [HH:MM:SS] 형태일 때 (오늘 날짜 강제 주입)
                     only_time = re.search(r'(\d{2}:\d{2}:\d{2})', line)
-                    if only_time:
-                        display_time = f"{today_mm_dd} {only_time.group(1)}"
-                    else:
-                        display_time = "Unknown"
+                    display_time = f"{today_mm_dd} {only_time.group(1)}" if only_time else "Unknown"
 
                 msg = line.split(" - ")[-1] if " - " in line else line
-                # 메시지 내부의 대괄호 시간 제거
-                msg = re.sub(r'\[\d{2}:\d{2}:\d{2}\]\s*', '', msg).strip()
-                msg = re.sub(r'\[\d{4}-\d{2}-\d{2}.*?\]\s*', '', msg).strip()
+                
+                # ★ 페어봇 로그(PAIR_RAW) 가로 길이 압축 로직 ★
+                if "PAIR" in log_type:
+                    if "Z15=" in msg:
+                        sections = msg.split('|')
+                        compact = []
+                        for sec in sections:
+                            # 레이블 추출
+                            label = ""
+                            if "CRYPTO" in sec: label = "CRYPTO"
+                            elif "METALS" in sec: label = "METALS"
+                            elif "ALTCOINS" in sec: label = "ALTCOINS"
+                            
+                            # Z-Score 숫자 추출 (Z15=1.23 Z1h=4.56 -> 1.23/4.56)
+                            z15 = re.search(r'Z15=([\d.-]+)', sec)
+                            z1h = re.search(r'Z1h=([\d.-]+)', sec)
+                            
+                            if label and z15 and z1h:
+                                compact.append(f"{label}:{z15.group(1)}/{z1h.group(1)}")
+                        
+                        if compact:
+                            msg = " | ".join(compact)
+                        else:
+                            msg = msg.replace("🔎 감시중 |", "").replace("🔎 감시중", "").strip()
+                    else:
+                        # 휴장 메시지 등 일반 텍스트 처리
+                        msg = msg.replace("🔎 감시중 |", "").replace("🔎 감시중", "").strip()
                 
                 display_line = f"[{display_time}] {msg}"
 
