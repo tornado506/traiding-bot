@@ -66,7 +66,7 @@ ex_pub  = ccxt.bybit({'enableRateLimit': True, 'options': {'defaultType': 'linea
 session = HTTP(testnet=False, demo=True, api_key=API_KEY, api_secret=SECRET)
 session.endpoint = "https://api-demo.bybit.com"
 
-PRECISION = {'BTCUSDT': 3, 'ETHUSDT': 2, 'XAUUSDT': 2, 'XAGUSDT': 1}
+PRECISION = {'BTCUSDT': 3, 'ETHUSDT': 2, 'XAUUSDT': 2, 'XAGUSDT': 1,}
 
 # ══════════════════════════════════════════════════════
 # [2] 전략 파라미터
@@ -78,8 +78,8 @@ PAIRS = {
         'full_val': 8000,       # [NEW-1] 풀사이즈 포지션 총액 ($)
         'half_val': 4000,       # [NEW-1] 하프사이즈 포지션 총액 ($)
         'tar':      40.0,       # [NEW-5] 목표 순익 ($) — 슬리피지 버퍼 포함
-        'ze1':      2.6,        # [NEW-2] 1차 진입 Z 임계값
-        'ze2':      3.0,       # [NEW-2] 2차 진입 Z 임계값 (풀사이즈 완성)
+        'ze1':      2.4,        # [NEW-2] 1차 진입 Z 임계값
+        'ze2':      2.8,       # [NEW-2] 2차 진입 Z 임계값 (풀사이즈 완성)
     },
     'METALS': {
         'a':        'XAUUSDT',
