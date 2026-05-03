@@ -708,6 +708,20 @@ def main():
                     if p.get('symbol') in [c['a'], c['b']]
                 ]
 
+                # ─── [수정] 금/은 시장 거래 시간 엄수 로직 (KST 기준) ──────────
+                if pid == 'METALS' and not cur_pair:
+                    now = datetime.datetime.now()
+                    wd = now.weekday()  # 0:월, 4:금, 5:토, 6:일
+                    hr = now.hour
+                    
+                    # 토요일(5) 06시부터 ~ 일요일(6) 전체 ~ 월요일(0) 07시 이전까지 차단
+                    is_market_closed = (wd == 5 and hr >= 6) or (wd == 6) or (wd == 0 and hr < 7)
+                    
+                    if is_market_closed:
+                        if loop_cnt % 60 == 0:
+                            log(f"💤 [{pid}] 금/은 시장 휴장 (토06시~월07시) - 진입 대기 중")
+                        continue
+
                 # 공적분 검정 (주 1회)
                 check_coint(pid, c['a'], c['b'])
 
