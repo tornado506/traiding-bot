@@ -93,6 +93,18 @@ st.markdown(
 
 # --- [3] 데이터 처리 함수 ---
 
+def get_rsi_live(symbol):
+    try:
+        r = ss.get_kline(category="linear", symbol=symbol, interval="15", limit=100)["result"]["list"]
+        df = pd.DataFrame(r, columns=["ts","o","h","l","c","v","t"]).apply(pd.to_numeric).iloc[::-1]
+        delta = df['c'].diff()
+        gain = delta.where(delta > 0, 0); loss = -delta.where(delta < 0, 0)
+        avg_gain = gain.ewm(alpha=1/14, min_periods=14, adjust=False).mean()
+        avg_loss = loss.ewm(alpha=1/14, min_periods=14, adjust=False).mean()
+        rsi = 100 - (100 / (1 + (avg_gain / (avg_loss + 1e-9))))
+        return round(rsi.iloc[-1], 1)
+    except: return "--"
+
 def get_margin_balance():
     try:
         res = ss.get_wallet_balance(accountType="UNIFIED", coin="USDT")
@@ -101,10 +113,21 @@ def get_margin_balance():
 
 def get_live_status():
     try:
-        # 월-일 시:분:초 표시
         now = datetime.now().strftime('%m-%d %H:%M:%S')
+        
+        # ★ 로그 형식과 동일하게 RSI 실시간 한 줄씩 생성 ★
+        symbols = ["BTCUSDT", "ETHUSDT", "SOLUSDT", "XAUUSDT", "XAGUSDT", "DOGEUSDT"]
+        rsi_lines = []
+        for s in symbols:
+            val = get_rsi_live(s)
+            # 로그와 똑같은 [월-일 시:분:초] 🔎 [종목] 형식
+            rsi_lines.append(f"[{now}] 🔎 {s:<10} 감시 중... RSI: {val}")
+        
+        # RSI 라인들을 합침
+        rsi_head = "<div>" + "</div><div>".join(rsi_lines) + "</div>"
+
         pos_res = ss.get_positions(category="linear", settleCoin="USDT")['result']['list']
-        lines = []
+        pos_lines = []
         for p in pos_res:
             sz = float(p.get("size", 0))
             if sz > 0:
@@ -116,8 +139,14 @@ def get_live_status():
                 base = CONFIGS.get(sym, {}).get("half_unit", 0.01)
                 step_label = "Full" if sz >= base * 1.5 else "Half"
                 line = f"[{now}] 🛰️ {sym:<10} {side:<6} | Net: {pnl_html} | {step_label} | Qty: {sz:<7} | Avg: {avg}"
-                lines.append(f"<div>{line}</div>")
-        return "".join(lines) if lines else f"<div>[{now}] 🛰️ 현재 오픈된 포지션이 없습니다.</div>"
+                pos_lines.append(f"<div>{line}</div>")
+        
+        # 포지션 정보가 없으면 알림 표시
+        if not pos_lines:
+            pos_lines.append(f"<div>[{now}] 🛰️ 현재 오픈된 포지션이 없습니다.</div>")
+
+        # 결과: RSI 감시 로그(위) + 현재 포지션 상황(아래)
+        return rsi_head + "<div style='margin-top:10px; border-top:1px dashed #444; padding-top:10px;'>" + "".join(pos_lines) + "</div>"
     except: return "<div class='status-text'>🛰️ API 연결 대기 중...</div>"
 
 @st.cache_data(ttl=10)
