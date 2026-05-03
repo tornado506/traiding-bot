@@ -22,6 +22,7 @@ FinalSniperBotV7 - 클로드 7차 검수 최종 수정판
             [효과] 실제 잡힌 평단가로부터 정확한 intervals 간격으로 거미줄 보장.
 """
 
+from datetime import datetime
 import logging
 import time
 import numpy as np
@@ -352,6 +353,19 @@ class FinalSniperBotV7:
                     long_p  = next((p for p in pos_res if p["symbol"] == symbol and p["side"] == "Buy"  and float(p["size"]) > 0), None)
                     short_p = next((p for p in pos_res if p["symbol"] == symbol and p["side"] == "Sell" and float(p["size"]) > 0), None)
                     main_p = (long_p if state["side"] == "Buy" else short_p) if state["active"] else (long_p or short_p)
+
+                    # ─── [수정] 금/은 시장 거래 시간 엄수 로직 (KST 기준) ──────────
+                    is_metal = "XAU" in symbol or "XAG" in symbol
+                    if is_metal and not main_p:
+                        now = datetime.now()
+                        wd = now.weekday()
+                        hr = now.hour
+                        
+                        # 토요일(5) 06시부터 ~ 일요일(6) 전체 ~ 월요일(0) 07시 이전까지 차단
+                        if (wd == 5 and hr >= 6) or (wd == 6) or (wd == 0 and hr < 7):
+                            continue # 진입 로직 건너뛰고 다음 종목으로
+                    # ──────────────────────────────────────────────────────────
+
 
                     # ─── [A] 포지션 없음 ─────────────────────────────
                     if not main_p:
