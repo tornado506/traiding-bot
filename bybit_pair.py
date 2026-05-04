@@ -59,7 +59,7 @@ PAIRS = {
         'a':        'BTCUSDT',
         'b':        'ETHUSDT',
         'val':      8000,       # 포지션 총액 ($) — 각 레그 $4,000
-        'tar':      40.0,       # 목표 순익 ($)
+        'tar':      15.0,       # 목표 순익 ($)
         'ze':       1.9,        # 진입 Z 임계값
         'max_hold': 48,         # Time Stop (시간)
     },
@@ -67,7 +67,7 @@ PAIRS = {
         'a':        'XAUUSDT',
         'b':        'XAGUSDT',
         'val':      8000,
-        'tar':      40.0,
+        'tar':      15.0,
         'ze':       2.0,
         'max_hold': 96,
     },
@@ -75,7 +75,7 @@ PAIRS = {
         'a':        'SOLUSDT',
         'b':        'AVAXUSDT',
         'val':      8000,
-        'tar':      40.0,
+        'tar':      15.0,
         'ze':       1.8,
         'max_hold': 72,
     },
