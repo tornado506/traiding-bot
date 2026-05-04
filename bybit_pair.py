@@ -58,24 +58,24 @@ PAIRS = {
     'CRYPTO': {
         'a':        'BTCUSDT',
         'b':        'ETHUSDT',
-        'val':      8000,       # 포지션 총액 ($) — 각 레그 $4,000
-        'tar':      40.0,       # 목표 순익 ($)
+        'val':      10000,       # 포지션 총액 ($) — 각 레그 $5,000
+        'tar':      15.0,       # 목표 순익 ($)
         'ze':       1.9,        # 진입 Z 임계값
         'max_hold': 48,         # Time Stop (시간)
     },
     'METALS': {
         'a':        'XAUUSDT',
         'b':        'XAGUSDT',
-        'val':      8000,
-        'tar':      40.0,
+        'val':      10000,
+        'tar':      15.0,
         'ze':       2.2,
         'max_hold': 96,
     },
     'ALTCOINS': {
         'a':        'SOLUSDT',
         'b':        'AVAXUSDT',
-        'val':      8000,
-        'tar':      40.0,
+        'val':      10000,
+        'tar':      15.0,
         'ze':       2.1,
         'max_hold': 72,
     },
