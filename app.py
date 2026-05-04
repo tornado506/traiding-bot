@@ -6,68 +6,90 @@ from pybit.unified_trading import HTTP
 from streamlit_autorefresh import st_autorefresh
 
 # [1. 설정 및 연결]
+# 계정 1: 메인 봇 (bybit7.py / 원금 $50,000)
 K1, S1 = "O1QpHJH4wdsjPiCe1x", "XdHD6eGaNz1iSnLF0j6nVEETZMDiSvGnai75"
 ss1 = HTTP(testnet=False, demo=True, api_key=K1, api_secret=S1)
 ss1.endpoint = "https://api-demo.bybit.com"
 
+# 계정 2: 페어 봇 (bybit_pair.py / 원금 $5,000)
 K2, S2 = "PdCEy7g1TSfU5SY5aQ", "lYE2y2y7c79wG3K0kntZiwgwDwhdHY6mNUHo"
 ss2 = HTTP(testnet=False, demo=True, api_key=K2, api_secret=S2)
 ss2.endpoint = "https://api-demo.bybit.com"
 
-# ★ 원금 설정 (수익금 계산의 기준점) ★
 START_CASH_MAIN = 50000.0
 START_CASH_SUB  = 5000.0
 
-LOG_FILES = {"MAIN_LOG": "bybit7.log"}
+# 로그 파일 경로 설정
+LOG_FILES = {"MAIN_LOG": "bybit7.log", "PAIR_LOG": "pair_bot.log"}
 FEE_RATE = 0.0006 
 
-st.set_page_config(page_title="Bybit Sniper Monitor v12.1", layout="wide")
-st_autorefresh(interval=5000, key="refresh_v12_1")
+st.set_page_config(page_title="Sniper Bot Center v13.0", layout="wide")
+# 5초마다 실시간 업데이트
+st_autorefresh(interval=5000, key="refresh_v13_final")
 
-# [2. CSS 스타일 - 폰트 색상 강화]
-st.markdown(
-    """
-    <style>
-    .stApp {background-color: #0e1117 !important;}
-    [data-testid="stHeader"], [data-testid="stToolbar"] {display: none !important;}
-    .block-container {padding-top: 0.5rem !important; max-width: 98% !important;}
-    * {font-family: 'Courier New', monospace; color: #ffffff !important;} /* 기본 글자색 흰색 강제 */
-    
-    .main-title { font-size: 28px !important; font-weight: bold !important; margin-bottom: 20px !important; text-align: center; }
+# [2. CSS 스타일]
+st.markdown("""
+<style>
+.stApp {background-color: #0e1117 !important;}
+[data-testid="stHeader"], [data-testid="stToolbar"] {display: none !important;}
+.block-container {padding-top: 1rem !important; max-width: 95% !important; margin: 0 auto !important;}
+* {font-family: 'Courier New', monospace; color: #ffffff !important;}
 
-    .total-balance-card {
-        background: linear-gradient(135deg, #1e2631 0%, #0e1117 100%);
-        padding: 20px; border-radius: 15px; text-align: center;
-        border: 1px solid #3e4452; margin-bottom: 25px !important;
-    }
-    .equity-label { color: #8b949e !important; font-size: 12px !important; margin-bottom: 8px; }
-    
-    .profit-plus { color: #00ffc8 !important; font-weight: bold; }
-    .profit-minus { color: #ff4b4b !important; font-weight: bold; }
-    .base-white { color: #ffffff !important; font-weight: bold; font-size: 24px; }
-    
-    .asset-card {
-        background-color: #161b22; padding: 20px; border-radius: 12px;
-        border: 1px solid #30363d; margin-bottom: 10px;
-    }
-    
-    /* 포지션 텍스트 색상 명시 */
-    .status-line { color: #e0e0e0 !important; font-size: 14px; line-height: 1.8; }
-    
-    .clean-log {
-        background-color: #000000 !important; color: #00ffc8 !important;
-        padding: 12px !important; border-radius: 8px; white-space: pre !important; 
-        overflow: auto !important; font-size: 13px !important; line-height: 1.5 !important;
-        height: 450px !important; margin-bottom: 30px;
-    }
-    
-    hr { border-top: 1px solid #333; margin: 20px 0; }
-    </style>
-    """,
-    unsafe_allow_html=True,
-)
+/* 코드박스/흰색 하이라이트 버그 완전 차단 */
+code, pre { background-color: transparent !important; border: none !important; color: inherit !important; padding: 0 !important; margin: 0 !important; }
+
+.total-balance-card {
+    background: linear-gradient(135deg, #1e2631 0%, #0e1117 100%);
+    padding: 25px; border-radius: 15px; text-align: center;
+    border: 1px solid #3e4452; margin-bottom: 30px;
+}
+.status-container {
+    background-color: #161b22 !important;
+    padding: 20px; border-radius: 12px;
+    border: 1px solid #30363d !important;
+    margin-bottom: 30px;
+}
+.pos-row {
+    display: flex; align-items: center;
+    padding: 8px 0; border-bottom: 1px solid #222;
+    font-size: 14px;
+}
+.col-time { width: 150px; color: #8b949e; }
+.col-sym  { width: 190px; font-weight: bold; }
+.col-net  { width: 160px; text-align: right; margin-right: 25px; }
+.col-qty  { width: 140px; }
+.col-avg  { width: 160px; }
+
+.log-box {
+    background-color: #000000 !important;
+    color: #00ffc8 !important;
+    padding: 15px; border-radius: 8px;
+    white-space: pre-wrap; font-size: 13px; line-height: 1.5;
+    height: 450px; overflow-y: auto; border: 1px solid #1a1c24;
+    margin-bottom: 25px;
+}
+.pair-box { color: #ff9800 !important; border-left: 4px solid #ff9800 !important; }
+.profit-plus { color: #00ffc8 !important; font-weight: bold; }
+.profit-minus { color: #ff4b4b !important; font-weight: bold; }
+.rsi-tag { color: #00ffc8 !important; font-weight: bold; margin-right: 20px; font-size: 15px; }
+.alive-tag { color: #00ffc8 !important; font-size: 14px; margin-left: 15px; font-weight: bold; }
+.dead-tag { color: #ff4b4b !important; font-size: 14px; margin-left: 15px; font-weight: bold; }
+</style>
+""", unsafe_allow_html=True)
 
 # --- [3] 데이터 처리 함수 ---
+
+def check_bot_alive(file_name):
+    """
+    pgrep 명령어를 사용하여 시스템 전체에서 해당 파일이 실행 중인지 확인.
+    리눅스 서버에서 프로세스를 감시하는 가장 확실한 방법입니다.
+    """
+    try:
+        # pgrep -f 는 파일명이 포함된 전체 실행 커맨드를 검색합니다.
+        exit_code = os.system(f"pgrep -f {file_name} > /dev/null")
+        return exit_code == 0 # 0이면 살아있음, 그 외엔 죽었음
+    except:
+        return False
 
 def get_rsi_live(symbol):
     try:
@@ -81,107 +103,110 @@ def get_rsi_live(symbol):
         return round(rsi.iloc[-1], 1)
     except: return "--"
 
-def get_profit_html():
+def get_profit_data():
     try:
-        bal1 = ss1.get_wallet_balance(accountType="UNIFIED", coin="USDT")
-        cash1 = float(bal1['result']['list'][0]['coin'][0]['walletBalance'])
-        pos1 = ss1.get_positions(category="linear", settleCoin="USDT")['result']['list']
-        pnl1 = sum(float(p.get('unrealisedPnl', 0)) for p in pos1 if float(p.get("size", 0)) > 0)
-        curr1 = cash1 + pnl1
-        prof1 = curr1 - START_CASH_MAIN
+        b1 = ss1.get_wallet_balance(accountType="UNIFIED", coin="USDT")
+        c1 = float(b1['result']['list'][0]['coin'][0]['walletBalance'])
+        p1 = ss1.get_positions(category="linear", settleCoin="USDT")['result']['list']
+        u1 = sum(float(pos.get('unrealisedPnl', 0)) for pos in p1 if float(pos.get("size", 0)) > 0)
         
-        bal2 = ss2.get_wallet_balance(accountType="UNIFIED", coin="USDT")
-        cash2 = float(bal2['result']['list'][0]['coin'][0]['walletBalance'])
-        pos2 = ss2.get_positions(category="linear", settleCoin="USDT")['result']['list']
-        pnl2 = sum(float(p.get('unrealisedPnl', 0)) for p in pos2 if float(p.get("size", 0)) > 0)
-        curr2 = cash2 + pnl2
-        prof2 = curr2 - START_CASH_SUB
+        b2 = ss2.get_wallet_balance(accountType="UNIFIED", coin="USDT")
+        c2 = float(b2['result']['list'][0]['coin'][0]['walletBalance'])
+        p2 = ss2.get_positions(category="linear", settleCoin="USDT")['result']['list']
+        u2 = sum(float(pos.get('unrealisedPnl', 0)) for pos in p2 if float(pos.get("size", 0)) > 0)
         
-        class1 = "profit-plus" if prof1 >= 0 else "profit-minus"
-        sign1 = "+" if prof1 >= 0 else "-"
-        class2 = "profit-plus" if prof2 >= 0 else "profit-minus"
-        sign2 = "+" if prof2 >= 0 else "-"
-        
-        return f"""
-        <span class="base-white">${curr1:,.2f}</span> 
-        <span class="{class1}" style="font-size:18px;">({sign1}${abs(prof1):,.2f})</span>
-        <span class="base-white" style="margin: 0 15px;">/</span>
-        <span class="base-white">${curr2:,.2f}</span> 
-        <span class="{class2}" style="font-size:18px;">({sign2}${abs(prof2):,.2f})</span>
-        """
-    except: return "Loading..."
-
-def get_live_status():
-    try:
-        now = datetime.now().strftime('%m-%d %H:%M:%S')
-        symbols = ["BTCUSDT", "ETHUSDT", "SOLUSDT", "XAUUSDT", "XAGUSDT", "DOGEUSDT"]
-        
-        # 지표 상단 표시
-        rsi_head = " ".join([f"<span style='color:#00ffc8; font-weight:bold; margin-right:15px;'>[{s[:3]}:{get_rsi_live(s)}]</span>" for s in symbols])
-
-        # 포지션 병합
-        pos_all = ss1.get_positions(category="linear", settleCoin="USDT")['result']['list'] + \
-                  ss2.get_positions(category="linear", settleCoin="USDT")['result']['list']
-        
-        pos_lines = []
-        for p in pos_all:
-            sz = float(p.get("size", 0))
-            if sz > 0:
-                sym = p['symbol']; side = f"({p['side']})"
-                pnl = float(p.get('unrealisedPnl', 0))
-                pnl_color = "#00ffc8" if pnl >= 0 else "#ff4b4b"
-                avg = f"{float(p.get('avgPrice', 0)):.2f}"
-                
-                # 가독성을 위해 각 줄을 span으로 감싸고 색상 명시
-                line = f"""
-                <div class="status-line">
-                    <span style="color:#8b949e;">[{now}]</span> 
-                    <span style="color:#ffffff; font-weight:bold;">🛰️ {sym:<10} {side:<6}</span> | 
-                    Net: <span style="color:{pnl_color}; font-weight:bold;">{pnl:>7.1f}$</span> | 
-                    Qty: <span style="color:#ffffff;">{sz:<7}</span> | 
-                    Avg: <span style="color:#ffffff;">{avg}</span>
-                </div>
-                """
-                pos_lines.append(line)
-        
-        final_pos_html = "".join(pos_lines) if pos_lines else f"<div style='color:#8b949e;'>[{now}] 대기 중... 오픈된 포지션이 없습니다.</div>"
-        
-        return f"<div>{rsi_head}</div><div style='margin-top:15px; border-top:1px dashed #333; padding-top:15px;'>{final_pos_html}</div>"
-    except: return "API Error"
-
-def get_final_logs(path, limit=100):
-    if not os.path.exists(path): return "로그 파일 대기 중..."
-    try:
-        with open(path, "r", encoding="utf-8", errors="ignore") as f:
-            lines = f.readlines()
-            processed = []
-            for l in reversed(lines):
-                line = l.strip()
-                if not line or "nohup" in line or "매물대" in line: continue
-                
-                # 핵심 로그만 필터링
-                if any(k in line for k in ["🎯", "🚀", "💰", "📉", "익절", "진입", "전략 시작", "본전"]):
-                    # 시간 추출 시도
-                    time_match = re.search(r'(\d{2}-\d{2} \d{2}:\d{2}:\d{2})', line)
-                    msg = line.split(" - ")[-1] if " - " in line else line
-                    processed.append(f"{msg}")
-                if len(processed) >= limit: break
-            return "\n".join(processed)
-    except: return "로그 읽기 오류"
+        return (c1+u1), (c1+u1-START_CASH_MAIN), (c2+u2), (c2+u2-START_CASH_SUB), (p1+p2)
+    except: return 0,0,0,0, []
 
 # --- [4] 화면 렌더링 ---
+st.markdown('<h2 style="text-align:center; font-size:30px; margin-bottom:20px;">🤖 Sniper Bot Unified Center</h2>', unsafe_allow_html=True)
 
-st.markdown('<div class="main-title">🤖 Bybit Sniper Bot Monitor</div>', unsafe_allow_html=True)
+curr1, prof1, curr2, prof2, all_positions = get_profit_data()
 
-# 1. 수익금 추적 카드
-st.markdown(f"""<div class="total-balance-card"><div class="equity-label">Current Value & Profit (Main / Sub)</div>{get_profit_html()}</div>""", unsafe_allow_html=True)
+# 1. 듀얼 실시간 수익금 카드
+c1_class = "profit-plus" if prof1 >= 0 else "profit-minus"
+c2_class = "profit-plus" if prof2 >= 0 else "profit-minus"
+st.markdown(f"""
+<div class="total-balance-card">
+    <div style="color:#8b949e; font-size:13px; margin-bottom:12px;">Real-time Cash + PnL (Main / Sub)</div>
+    <span style="font-size:28px; font-weight:bold;">${curr1:,.2f}</span> 
+    <span class="{c1_class}" style="font-size:20px;">({"+" if prof1>=0 else ""}{prof1:,.2f})</span>
+    <span style="font-size:28px; margin: 0 20px;">/</span>
+    <span style="font-size:28px; font-weight:bold;">${curr2:,.2f}</span> 
+    <span class="{c2_class}" style="font-size:20px;">({"+" if prof2>=0 else ""}{prof2:,.2f})</span>
+</div>
+""", unsafe_allow_html=True)
 
-# 2. 포지션 상태 (글자색 수정 완료)
-st.markdown('#### 📡 Real-time Market & Position Status')
-st.markdown(f"<div class='asset-card'>{get_live_status()}</div>", unsafe_allow_html=True)
+# 2. 실시간 지표 및 포지션 상태
+st.markdown('<h4 style="margin-bottom:12px;">📡 Real-time Market & Position Status</h4>', unsafe_allow_html=True)
+now_dt = datetime.now().strftime('%m-%d %H:%M:%S')
+symbols = ["BTCUSDT", "ETHUSDT", "SOLUSDT", "XAUUSDT", "XAGUSDT", "DOGEUSDT"]
+rsi_html = "".join([f'<span class="rsi-tag">[{s[:3]}:{get_rsi_live(s)}]</span>' for s in symbols])
 
-# 3. 트레이딩 로그
-st.markdown('#### 🤖 Trading History & Logs')
-st.markdown(f"<div class='clean-log'>{get_final_logs(LOG_FILES['MAIN_LOG'])}</div>", unsafe_allow_html=True)
+pos_html_list = []
+for p in all_positions:
+    sz = float(p.get("size", 0))
+    if sz > 0:
+        sym, side, pnl = p['symbol'], p['side'], float(p.get('unrealisedPnl', 0))
+        p_color = "#00ffc8" if pnl >= 0 else "#ff4b4b"
+        avg_p = float(p["avgPrice"])
+        pos_html_list.append(f'<div class="pos-row"><div class="col-time">[{now_dt}]</div><div class="col-sym">🛰️ {sym} ({side})</div><div class="col-net">Net: <span style="color:{p_color}; font-weight:bold;">{pnl:>7.1f}$</span></div><div class="col-qty">Qty: {sz}</div><div class="col-avg">Avg: {avg_p:.2f}</div></div>')
+st.markdown(f'<div class="status-container"><div style="margin-bottom:20px; padding-bottom:15px; border-bottom:1px dashed #444;">{rsi_html}</div>{"".join(pos_html_list) if pos_html_list else "<div style=\"color:#8b949e; padding:10px;\">오픈된 포지션이 없습니다.</div>"}</div>', unsafe_allow_html=True)
 
-st.caption(f"Last Update: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} | v12.1 Final Fixed")
+# 3. 메인봇 트레이딩 로그 (pgrep 기반 감시)
+is_main_alive = check_bot_alive("bybit7.py")
+status_main = "<span class='alive-tag'>🟢 봇 감시 중</span>" if is_main_alive else "<span class='dead-tag'>🔴 봇 중단됨</span>"
+st.markdown(f'<h4 style="margin-bottom:12px;">🤖 Main Bot History {status_main}</h4>', unsafe_allow_html=True)
+main_log_content = "로그 파일 대기 중..."
+if os.path.exists(LOG_FILES["MAIN_LOG"]):
+    with open(LOG_FILES["MAIN_LOG"], "r", encoding="utf-8", errors="ignore") as f:
+        lines = f.readlines()
+        processed = []
+        for l in reversed(lines):
+            if any(k in l for k in ["🎯", "🚀", "💰", "📉", "익절", "진입", "전략", "본전"]):
+                t_m = re.search(r'(\d{4})-(\d{2})-(\d{2}) (\d{2}:\d{2}:\d{2})', l)
+                d_t = f"[{t_m.group(2)}-{t_m.group(3)} {t_m.group(4)}]" if t_m else ""
+                msg = l.split(" - ")[-1].strip() if " - " in l else l.strip()
+                processed.append(f"{d_t} {msg}")
+            if len(processed) >= 60: break
+        main_log_content = "\n".join(processed)
+st.markdown(f'<div class="log-box">{main_log_content}</div>', unsafe_allow_html=True)
+
+# 4. 페어봇 트레이딩 로그 (pgrep 기반 감시)
+is_pair_alive = check_bot_alive("bybit_pair.py")
+status_pair = "<span class='alive-tag'>🟢 봇 감시 중</span>" if is_pair_alive else "<span class='dead-tag'>🔴 봇 중단됨</span>"
+st.markdown(f'<h4 style="margin-bottom:12px;">⚖️ Pair Bot History {status_pair}</h4>', unsafe_allow_html=True)
+pair_log_content = "로그 파일 대기 중..."
+if os.path.exists(LOG_FILES["PAIR_LOG"]):
+    with open(LOG_FILES["PAIR_LOG"], "r", encoding="utf-8", errors="ignore") as f:
+        lines = f.readlines()
+        processed_pair = []
+        for l in reversed(lines):
+            if "🔎 감시중" in l or any(k in l for k in ["🎯", "💰", "🚨"]):
+                t_m = re.search(r'\[(\d{2}-\d{2}) (\d{2}:\d{2}:\d{2})\]', l)
+                if not t_m:
+                    t_m = re.search(r'(\d{4})-(\d{2})-(\d{2}) (\d{2}:\d{2}:\d{2})', l)
+                    display_ts = f"[{t_m.group(2)}-{t_m.group(3)} {t_m.group(4)}]" if t_m else f"[{now_dt}]"
+                else:
+                    display_ts = f"[{t_m.group(1)} {t_m.group(2)}]"
+                
+                msg = l.split("] ")[-1].strip() if "] " in l else l.strip()
+                msg = msg.replace("🔎 감시중 | ", "")
+                
+                if "Z=" in msg:
+                    secs = msg.split('|')
+                    compact = []
+                    for s in secs:
+                        label = "CRYPTO" if "CRYPTO" in s else "METALS" if "METALS" in s else "ALTS" if "ALTCOINS" in s else ""
+                        z_v = re.search(r'Z=([\d.-]+)', s); net = re.search(r'Net=([\d.-]+)\$', s)
+                        if label and z_v:
+                            n_s = f"({net.group(1)}$)" if net else ""
+                            compact.append(f"{label}{n_s}:Z={z_v.group(1)}")
+                    msg = " | ".join(compact) if compact else msg
+                
+                processed_pair.append(f"{display_ts} {msg}")
+            if len(processed_pair) >= 80: break
+        pair_log_content = "\n".join(processed_pair)
+st.markdown(f'<div class="log-box pair-box">{pair_log_content}</div>', unsafe_allow_html=True)
+
+st.caption(f"Last Update: {now_dt} | v13.0 System-Root Tracking Edition")
