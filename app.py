@@ -11,16 +11,20 @@ from streamlit_autorefresh import st_autorefresh
 # 서버용 렌더링 설정
 matplotlib.use("Agg")
 
-# [1. 설정 및 연결 - 듀얼 계정]
-# 계정 1: 메인 봇 (bybit7)
+# [1. 설정 및 연결]
+# 계정 1: 메인 봇 (원금 $100,000)
 K1, S1 = "O1QpHJH4wdsjPiCe1x", "XdHD6eGaNz1iSnLF0j6nVEETZMDiSvGnai75"
 ss1 = HTTP(testnet=False, demo=True, api_key=K1, api_secret=S1)
 ss1.endpoint = "https://api-demo.bybit.com"
 
-# 계정 2: 페어 봇 (bybit_pair)
+# 계정 2: 페어 봇 (원금 $50,000)
 K2, S2 = "PdCEy7g1TSfU5SY5aQ", "lYE2y2y7c79wG3K0kntZiwgwDwhdHY6mNUHo"
 ss2 = HTTP(testnet=False, demo=True, api_key=K2, api_secret=S2)
 ss2.endpoint = "https://api-demo.bybit.com"
+
+# ★ 원금 설정 ★
+START_CASH_MAIN = 100000.0
+START_CASH_SUB  = 50000.0
 
 LOG_FILES = {"PAIR": "pair_bot.log", "BYBIT5": "bybit7.log"}
 
@@ -33,8 +37,8 @@ CONFIGS = {
 CHART_SIZE = (10.5, 3.5) 
 FEE_RATE = 0.0007 
 
-st.set_page_config(page_title="Dual Sniper Monitor v11.9.7", layout="wide")
-st_autorefresh(interval=5000, key="refresh_dual_v11_9")
+st.set_page_config(page_title="Sniper Bot Real-time Profit", layout="wide")
+st_autorefresh(interval=5000, key="refresh_profit_v11_9")
 
 # [2. CSS 스타일]
 st.markdown(
@@ -51,10 +55,14 @@ st.markdown(
     .total-balance-card {
         background: linear-gradient(135deg, #1e2631 0%, #0e1117 100%);
         padding: 15px; border-radius: 12px; text-align: center;
-        border: 1px solid #00ffc8; margin-bottom: 30px !important;
+        border: 1px solid #3e4452; margin-bottom: 30px !important;
     }
-    .equity-label { color: #8b949e !important; font-size: 11px !important; }
-    .equity-value { color: #00ffc8 !important; font-size: 30px !important; font-weight: bold !important; }
+    .equity-label { color: #8b949e !important; font-size: 12px !important; margin-bottom: 10px; }
+    
+    /* 수익금 강조용 폰트 스타일 */
+    .profit-plus { color: #00ffc8 !important; font-weight: bold; }
+    .profit-minus { color: #ff4b4b !important; font-weight: bold; }
+    .base-white { color: #ffffff !important; font-weight: bold; font-size: 26px; }
     
     .clean-log {
         background-color: #000000 !important; color: #00ffc8 !important;
@@ -86,23 +94,43 @@ def get_rsi_live(symbol):
         return round(rsi.iloc[-1], 1)
     except: return "--"
 
-# ★ 듀얼 계정 지능형 합산 잔액 로직 ★
-def get_dual_intelligent_balance():
+# ★ 지능형 수익금 계산 및 HTML 생성 ★
+def get_profit_html():
     try:
-        # 계정 1 계산
+        # 1. 메인 계정 계산
         bal1 = ss1.get_wallet_balance(accountType="UNIFIED", coin="USDT")
         cash1 = float(bal1['result']['list'][0]['coin'][0]['walletBalance'])
         pos1 = ss1.get_positions(category="linear", settleCoin="USDT")['result']['list']
         pnl1 = sum(float(p.get('unrealisedPnl', 0)) for p in pos1 if float(p.get("size", 0)) > 0)
+        curr1 = cash1 + pnl1
+        prof1 = curr1 - START_CASH_MAIN
         
-        # 계정 2 계산
+        # 2. 서브 계정 계산
         bal2 = ss2.get_wallet_balance(accountType="UNIFIED", coin="USDT")
         cash2 = float(bal2['result']['list'][0]['coin'][0]['walletBalance'])
         pos2 = ss2.get_positions(category="linear", settleCoin="USDT")['result']['list']
         pnl2 = sum(float(p.get('unrealisedPnl', 0)) for p in pos2 if float(p.get("size", 0)) > 0)
+        curr2 = cash2 + pnl2
+        prof2 = curr2 - START_CASH_SUB
         
-        return f"${(cash1 + pnl1):,.2f} / ${(cash2 + pnl2):,.2f}"
-    except: return "$0.00 / $0.00"
+        # 스타일 결정
+        class1 = "profit-plus" if prof1 >= 0 else "profit-minus"
+        sign1 = "+" if prof1 >= 0 else ""
+        
+        class2 = "profit-plus" if prof2 >= 0 else "profit-minus"
+        sign2 = "+" if prof2 >= 0 else ""
+        
+        # 최종 HTML 조합
+        html = f"""
+        <span class="base-white">${curr1:,.2f}</span> 
+        <span class="{class1}" style="font-size:20px;">({sign1}${prof1:,.2f})</span>
+        <span class="base-white" style="margin: 0 15px;">/</span>
+        <span class="base-white">${curr2:,.2f}</span> 
+        <span class="{class2}" style="font-size:20px;">({sign2}${prof2:,.2f})</span>
+        """
+        return html
+    except:
+        return "<span class='base-white'>API Error</span>"
 
 def get_live_status():
     try:
@@ -111,12 +139,11 @@ def get_live_status():
         rsi_lines = [f"[{now}] 🔎 {s:<10} 감시 중... RSI: {get_rsi_live(s)}" for s in symbols]
         rsi_head = "<div>" + "</div><div>".join(rsi_lines) + "</div>"
 
-        # 두 계정의 포지션을 모두 가져옴
         p_list1 = ss1.get_positions(category="linear", settleCoin="USDT")['result']['list']
         p_list2 = ss2.get_positions(category="linear", settleCoin="USDT")['result']['list']
         
         pos_lines = []
-        for p in (p_list1 + p_list2): # 두 리스트 합치기
+        for p in (p_list1 + p_list2):
             sz = float(p.get("size", 0))
             if sz > 0:
                 sym = p['symbol']; side = f"({p['side']})"
@@ -129,9 +156,8 @@ def get_live_status():
                 line = f"[{now}] 🛰️ {sym:<10} {side:<6} | Net: {pnl_html} | {step_label} | Qty: {sz:<7} | Avg: {avg}"
                 pos_lines.append(f"<div>{line}</div>")
         
-        content = rsi_head + "<div style='margin-top:10px; border-top:1px dashed #444; padding-top:10px;'>" + ("".join(pos_lines) if pos_lines else f"<div>[{now}] 🛰️ 현재 오픈된 포지션이 없습니다.</div>") + "</div>"
-        return content
-    except: return "<div class='status-text'>🛰️ API 연결 대기 중...</div>"
+        return rsi_head + "<div style='margin-top:10px; border-top:1px dashed #444; padding-top:10px;'>" + ("".join(pos_lines) if pos_lines else f"<div>[{now}] 🛰️ 현재 오픈된 포지션이 없습니다.</div>") + "</div>"
+    except: return "🛰️ API 연결 대기 중..."
 
 @st.cache_data(ttl=10)
 def get_kline(sym, itv, lim):
@@ -198,22 +224,22 @@ def get_final_logs(path, log_type="PAIR_RAW", limit=150):
 
 # --- [4] 화면 렌더링 ---
 
-st.markdown('<div class="main-title">🤖 Sniper Bot Monitor v11.9.7</div>', unsafe_allow_html=True)
+st.markdown('<div class="main-title">🤖 Sniper Bot Unified Monitor v11.9.8</div>', unsafe_allow_html=True)
 
-# 1. 지능형 실시간 듀얼 잔액 (Main / Sub)
-dual_total = get_dual_intelligent_balance()
+# 1. 수익금 실시간 추적 카드 (Main $100k / Sub $50k)
+profit_info_html = get_profit_html()
 st.markdown(f"""
     <div class="total-balance-card">
-        <div class="equity-label">Intelligent Balance (Main / Sub-Pair)</div>
-        <div class="equity-value">{dual_total}</div>
+        <div class="equity-label">Current Cash+PnL (Profit vs Initial)</div>
+        <div class="equity-value">{profit_info_html}</div>
     </div>
     """, unsafe_allow_html=True)
 
-# 2. 메인 봇 로그
-st.markdown('<div class="section-header">🤖 Main Bot Trading History</div>', unsafe_allow_html=True)
-live_header = get_live_status()
+# 2. 봇 상태 및 포지션 로그
+st.markdown('<div class="section-header">🤖 Real-time Trading Status</div>', unsafe_allow_html=True)
+live_status = get_live_status()
 main_history = get_final_logs(LOG_FILES['BYBIT5'], "BYBIT5", limit=60)
-st.markdown(f"<div class='clean-log'>{live_header}\n{'-'*95}{main_history}</div>", unsafe_allow_html=True)
+st.markdown(f"<div class='clean-log'>{live_status}\n{'-'*95}{main_history}</div>", unsafe_allow_html=True)
 
 # 3. 페어봇 로그
 st.subheader("⚖️ Pair Bot Trading History")
@@ -223,13 +249,12 @@ st.markdown(f"<div class='clean-log pair-log'>{pair_history}</div>", unsafe_allo
 st.markdown("<hr>", unsafe_allow_html=True)
 
 # 4. 차트
-st.markdown('<div class="section-header">📊 Market Analysis Charts</div>', unsafe_allow_html=True)
-tf_choice = st.radio("Chart Timeframe", ["15M", "1H"], horizontal=True, key="v11_9_tf")
-itv = "60" if tf_choice == "1H" else "15"
-img_crypto = draw_pair_chart("BTCUSDT", "ETHUSDT", "#007bff", "#dc3545", "CRYPTO Correl", itv)
+st.markdown('<div class="section-header">📊 Correlation Charts</div>', unsafe_allow_html=True)
+tf_choice = st.radio("Timeframe", ["15M", "1H"], horizontal=True, key="v11_9_tf")
+img_crypto = draw_pair_chart("BTCUSDT", "ETHUSDT", "#007bff", "#dc3545", "CRYPTO", "60" if tf_choice == "1H" else "15")
 if img_crypto: st.image(img_crypto, use_container_width=True)
 st.markdown("<br>", unsafe_allow_html=True)
-img_metal = draw_pair_chart("XAUUSDT", "XAGUSDT", "#ffc107", "#6f42c1", "METALS Correl", itv)
+img_metal = draw_pair_chart("XAUUSDT", "XAGUSDT", "#ffc107", "#6f42c1", "METALS", "60" if tf_choice == "1H" else "15")
 if img_metal: st.image(img_metal, use_container_width=True)
 
-st.caption(f"Last Update: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} | v11.9.7 Dual-Account Unified")
+st.caption(f"Last Update: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} | Real-time Profit Tracking")
