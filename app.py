@@ -11,29 +11,32 @@ from streamlit_autorefresh import st_autorefresh
 # 서버용 렌더링 설정
 matplotlib.use("Agg")
 
-# [1. 설정 및 연결]
-K, S = "O1QpHJH4wdsjPiCe1x", "XdHD6eGaNz1iSnLF0j6nVEETZMDiSvGnai75"
-ss = HTTP(testnet=False, demo=True, api_key=K, api_secret=S)
-ss.endpoint = "https://api-demo.bybit.com"
+# [1. 설정 및 연결 - 듀얼 계정]
+# 계정 1: 메인 봇 (bybit7)
+K1, S1 = "O1QpHJH4wdsjPiCe1x", "XdHD6eGaNz1iSnLF0j6nVEETZMDiSvGnai75"
+ss1 = HTTP(testnet=False, demo=True, api_key=K1, api_secret=S1)
+ss1.endpoint = "https://api-demo.bybit.com"
+
+# 계정 2: 페어 봇 (bybit_pair)
+K2, S2 = "PdCEy7g1TSfU5SY5aQ", "lYE2y2y7c79wG3K0kntZiwgwDwhdHY6mNUHo"
+ss2 = HTTP(testnet=False, demo=True, api_key=K2, api_secret=S2)
+ss2.endpoint = "https://api-demo.bybit.com"
 
 LOG_FILES = {"PAIR": "pair_bot.log", "BYBIT5": "bybit7.log"}
 
 CONFIGS = {
-    "BTCUSDT":  {"half_unit": 0.051},
-    "XAUUSDT":  {"half_unit": 0.86},
-    "ETHUSDT":  {"half_unit": 1.73},
-    "SOLUSDT":  {"half_unit": 47.6},
-    "XAGUSDT":  {"half_unit": 53.0},
-    "DOGEUSDT": {"half_unit": 37000.0},
+    "BTCUSDT":  {"half_unit": 0.051}, "XAUUSDT":  {"half_unit": 0.86},
+    "ETHUSDT":  {"half_unit": 1.73}, "SOLUSDT":  {"half_unit": 47.6},
+    "XAGUSDT":  {"half_unit": 53.0}, "DOGEUSDT": {"half_unit": 37000.0},
 }
 
 CHART_SIZE = (10.5, 3.5) 
 FEE_RATE = 0.0007 
 
-st.set_page_config(page_title="Sniper Bot Monitor v11.9", layout="wide")
-st_autorefresh(interval=10000, key="refresh_v11_9_final")
+st.set_page_config(page_title="Dual Sniper Monitor v11.9.7", layout="wide")
+st_autorefresh(interval=5000, key="refresh_dual_v11_9")
 
-# [2. CSS 스타일 - 제목 크기 확대 및 모든 헤더 흰색]
+# [2. CSS 스타일]
 st.markdown(
     """
     <style>
@@ -42,46 +45,24 @@ st.markdown(
     .block-container {padding-top: 0.3rem !important; max-width: 98% !important;}
     * {font-family: 'Courier New', monospace;}
     
-    /* ★ 메인 제목: 흰색 및 크기 확대 (32px) ★ */
-    .main-title {
-        color: #ffffff !important;
-        font-size: 32px !important;
-        font-weight: bold !important;
-        margin-bottom: 25px !important; /* 아래 여백 추가 */
-        text-align: center;
-    }
-
-    /* ★ 모든 섹션 제목: 흰색 (#ffffff) ★ */
-    h2, h4, .section-header {
-        color: #ffffff !important; 
-        font-weight: bold !important; 
-        font-size: 18px !important; 
-        margin-top: 15px !important;
-        margin-bottom: 10px !important;
-    }
+    .main-title { color: #ffffff !important; font-size: 32px !important; font-weight: bold !important; margin-bottom: 25px !important; text-align: center; }
+    h2, h4, .section-header { color: #ffffff !important; font-weight: bold !important; font-size: 18px !important; margin-top: 15px !important; margin-bottom: 10px !important; }
 
     .total-balance-card {
         background: linear-gradient(135deg, #1e2631 0%, #0e1117 100%);
         padding: 15px; border-radius: 12px; text-align: center;
-        border: 1px solid #3e4452; 
-        margin-bottom: 30px !important; /* 자산 카드 아래 여백 확대 */
+        border: 1px solid #00ffc8; margin-bottom: 30px !important;
     }
     .equity-label { color: #8b949e !important; font-size: 11px !important; }
-    .equity-value { color: #ffffff !important; font-size: 28px !important; font-weight: bold !important; }
+    .equity-value { color: #00ffc8 !important; font-size: 30px !important; font-weight: bold !important; }
     
     .clean-log {
-        background-color: #000000 !important; 
-        color: #00ffc8 !important;
-        padding: 10px !important; 
-        border: none !important; 
-        white-space: pre !important; 
-        overflow: auto !important; 
-        -webkit-overflow-scrolling: touch !important;
-        font-size: 13px !important; 
-        line-height: 1.4 !important;
-        height: 380px !important; 
-        margin-bottom: 35px;
+        background-color: #000000 !important; color: #00ffc8 !important;
+        padding: 10px !important; border: none !important; white-space: pre !important; 
+        overflow: auto !important; font-size: 13px !important; line-height: 1.4 !important;
+        height: 400px !important; margin-bottom: 35px;
     }
+    .clean-log code { background-color: transparent !important; color: inherit !important; padding: 0 !important; }
     .pair-log { color: #ff9800 !important; border-left: 3.2px solid #ff9800 !important; }
     
     hr {border-top: 1px solid #333; margin: 25px 0;}
@@ -95,7 +76,7 @@ st.markdown(
 
 def get_rsi_live(symbol):
     try:
-        r = ss.get_kline(category="linear", symbol=symbol, interval="15", limit=100)["result"]["list"]
+        r = ss1.get_kline(category="linear", symbol=symbol, interval="15", limit=100)["result"]["list"]
         df = pd.DataFrame(r, columns=["ts","o","h","l","c","v","t"]).apply(pd.to_numeric).iloc[::-1]
         delta = df['c'].diff()
         gain = delta.where(delta > 0, 0); loss = -delta.where(delta < 0, 0)
@@ -105,30 +86,37 @@ def get_rsi_live(symbol):
         return round(rsi.iloc[-1], 1)
     except: return "--"
 
-def get_margin_balance():
+# ★ 듀얼 계정 지능형 합산 잔액 로직 ★
+def get_dual_intelligent_balance():
     try:
-        res = ss.get_wallet_balance(accountType="UNIFIED", coin="USDT")
-        return f"${float(res['result']['list'][0]['totalMarginBalance']):,.2f}"
-    except: return "$0.00"
+        # 계정 1 계산
+        bal1 = ss1.get_wallet_balance(accountType="UNIFIED", coin="USDT")
+        cash1 = float(bal1['result']['list'][0]['coin'][0]['walletBalance'])
+        pos1 = ss1.get_positions(category="linear", settleCoin="USDT")['result']['list']
+        pnl1 = sum(float(p.get('unrealisedPnl', 0)) for p in pos1 if float(p.get("size", 0)) > 0)
+        
+        # 계정 2 계산
+        bal2 = ss2.get_wallet_balance(accountType="UNIFIED", coin="USDT")
+        cash2 = float(bal2['result']['list'][0]['coin'][0]['walletBalance'])
+        pos2 = ss2.get_positions(category="linear", settleCoin="USDT")['result']['list']
+        pnl2 = sum(float(p.get('unrealisedPnl', 0)) for p in pos2 if float(p.get("size", 0)) > 0)
+        
+        return f"${(cash1 + pnl1):,.2f} / ${(cash2 + pnl2):,.2f}"
+    except: return "$0.00 / $0.00"
 
 def get_live_status():
     try:
         now = datetime.now().strftime('%m-%d %H:%M:%S')
-        
-        # ★ 로그 형식과 동일하게 RSI 실시간 한 줄씩 생성 ★
         symbols = ["BTCUSDT", "ETHUSDT", "SOLUSDT", "XAUUSDT", "XAGUSDT", "DOGEUSDT"]
-        rsi_lines = []
-        for s in symbols:
-            val = get_rsi_live(s)
-            # 로그와 똑같은 [월-일 시:분:초] 🔎 [종목] 형식
-            rsi_lines.append(f"[{now}] 🔎 {s:<10} 감시 중... RSI: {val}")
-        
-        # RSI 라인들을 합침
+        rsi_lines = [f"[{now}] 🔎 {s:<10} 감시 중... RSI: {get_rsi_live(s)}" for s in symbols]
         rsi_head = "<div>" + "</div><div>".join(rsi_lines) + "</div>"
 
-        pos_res = ss.get_positions(category="linear", settleCoin="USDT")['result']['list']
+        # 두 계정의 포지션을 모두 가져옴
+        p_list1 = ss1.get_positions(category="linear", settleCoin="USDT")['result']['list']
+        p_list2 = ss2.get_positions(category="linear", settleCoin="USDT")['result']['list']
+        
         pos_lines = []
-        for p in pos_res:
+        for p in (p_list1 + p_list2): # 두 리스트 합치기
             sz = float(p.get("size", 0))
             if sz > 0:
                 sym = p['symbol']; side = f"({p['side']})"
@@ -141,18 +129,14 @@ def get_live_status():
                 line = f"[{now}] 🛰️ {sym:<10} {side:<6} | Net: {pnl_html} | {step_label} | Qty: {sz:<7} | Avg: {avg}"
                 pos_lines.append(f"<div>{line}</div>")
         
-        # 포지션 정보가 없으면 알림 표시
-        if not pos_lines:
-            pos_lines.append(f"<div>[{now}] 🛰️ 현재 오픈된 포지션이 없습니다.</div>")
-
-        # 결과: RSI 감시 로그(위) + 현재 포지션 상황(아래)
-        return rsi_head + "<div style='margin-top:10px; border-top:1px dashed #444; padding-top:10px;'>" + "".join(pos_lines) + "</div>"
+        content = rsi_head + "<div style='margin-top:10px; border-top:1px dashed #444; padding-top:10px;'>" + ("".join(pos_lines) if pos_lines else f"<div>[{now}] 🛰️ 현재 오픈된 포지션이 없습니다.</div>") + "</div>"
+        return content
     except: return "<div class='status-text'>🛰️ API 연결 대기 중...</div>"
 
 @st.cache_data(ttl=10)
 def get_kline(sym, itv, lim):
     try:
-        r = ss.get_kline(category="linear", symbol=sym, interval=itv, limit=lim)["result"]["list"]
+        r = ss1.get_kline(category="linear", symbol=sym, interval=itv, limit=lim)["result"]["list"]
         return pd.DataFrame(r, columns=["ts","o","h","l","c","v","t"]).apply(pd.to_numeric).iloc[::-1].reset_index(drop=True)
     except: return pd.DataFrame()
 
@@ -183,91 +167,69 @@ def get_final_logs(path, log_type="PAIR_RAW", limit=150):
             for l in reversed(lines):
                 line = l.strip()
                 if not line or "nohup" in line or "매물대" in line or "에러" in line: continue
-
-                # 시간 추출 (MM-DD HH:MM:SS 유지)
                 time_match = re.search(r'(\d{4})-(\d{2})-(\d{2}) (\d{2}:\d{2}:\d{2})', line)
-                if time_match:
-                    display_time = f"{time_match.group(2)}-{time_match.group(3)} {time_match.group(4)}"
+                if time_match: display_time = f"{time_match.group(2)}-{time_match.group(3)} {time_match.group(4)}"
                 else:
                     only_time = re.search(r'(\d{2}:\d{2}:\d{2})', line)
                     display_time = f"{today_mm_dd} {only_time.group(1)}" if only_time else "Unknown"
-
                 msg = line.split(" - ")[-1] if " - " in line else line
-                
-                # ★ 페어봇 로그(PAIR_RAW) 가로 길이 압축 로직 ★
                 if "PAIR" in log_type:
-                    if "Z15=" in msg:
+                    if "Z=" in msg:
                         sections = msg.split('|')
                         compact = []
                         for sec in sections:
-                            # 레이블 추출
                             label = ""
                             if "CRYPTO" in sec: label = "CRYPTO"
                             elif "METALS" in sec: label = "METALS"
                             elif "ALTCOINS" in sec: label = "ALTCOINS"
-                            
-                            # Z-Score 숫자 추출 (Z15=1.23 Z1h=4.56 -> 1.23/4.56)
-                            z15 = re.search(r'Z15=([\d.-]+)', sec)
-                            z1h = re.search(r'Z1h=([\d.-]+)', sec)
-                            
-                            if label and z15 and z1h:
-                                compact.append(f"{label}:{z15.group(1)}/{z1h.group(1)}")
-                        
-                        if compact:
-                            msg = " | ".join(compact)
-                        else:
-                            msg = msg.replace("🔎 감시중 |", "").replace("🔎 감시중", "").strip()
-                    else:
-                        # 휴장 메시지 등 일반 텍스트 처리
-                        msg = msg.replace("🔎 감시중 |", "").replace("🔎 감시중", "").strip()
-                
+                            z_val = re.search(r'Z=([\d.-]+)', sec); net_pnl = re.search(r'Net=([\d.-]+)\$', sec)
+                            if label and z_val:
+                                net_str = f"({net_pnl.group(1)}$)" if net_pnl else ""
+                                compact.append(f"{label}{net_str}:Z={z_val.group(1)}")
+                        msg = " | ".join(compact) if compact else msg.replace("🔎 감시중 |", "").strip()
+                    else: msg = msg.replace("🔎 감시중 |", "").replace("🔎 감시중", "").strip()
                 display_line = f"[{display_time}] {msg}"
-
                 content = re.sub(r'\[.*?\]', '', display_line).strip()
                 if content in seen: continue
-                seen.add(content)
-                processed.append(display_line)
+                seen.add(content); processed.append(display_line)
                 if len(processed) >= limit: break
-            
             return "\n\n" + "\n".join(processed)
     except: return "Log Error"
 
 # --- [4] 화면 렌더링 ---
 
-# 1. 메인 제목 (흰색, 크게)
-st.markdown('<div class="main-title">🤖 Sniper Bot Monitor v11.9</div>', unsafe_allow_html=True)
+st.markdown('<div class="main-title">🤖 Sniper Bot Monitor v11.9.7</div>', unsafe_allow_html=True)
 
-# 2. 자산 카드 (아래 여백 추가)
-current_equity = get_margin_balance()
+# 1. 지능형 실시간 듀얼 잔액 (Main / Sub)
+dual_total = get_dual_intelligent_balance()
 st.markdown(f"""
     <div class="total-balance-card">
-        <div class="equity-label">Total Equity (Margin Balance)</div>
-        <div class="equity-value">{current_equity}</div>
+        <div class="equity-label">Intelligent Balance (Main / Sub-Pair)</div>
+        <div class="equity-value">{dual_total}</div>
     </div>
     """, unsafe_allow_html=True)
 
-# 3. 메인 봇 로그 (제목 흰색)
+# 2. 메인 봇 로그
 st.markdown('<div class="section-header">🤖 Main Bot Trading History</div>', unsafe_allow_html=True)
 live_header = get_live_status()
 main_history = get_final_logs(LOG_FILES['BYBIT5'], "BYBIT5", limit=60)
 st.markdown(f"<div class='clean-log'>{live_header}\n{'-'*95}{main_history}</div>", unsafe_allow_html=True)
 
-# 4. 페어봇 로그 (제목 흰색, 월-일 표시 수정 완료)
-st.markdown('<div class="section-header">⚖️ Pair Bot Trading History</div>', unsafe_allow_html=True)
+# 3. 페어봇 로그
+st.subheader("⚖️ Pair Bot Trading History")
 pair_history = get_final_logs(LOG_FILES['PAIR'], "PAIR_RAW", limit=100)
 st.markdown(f"<div class='clean-log pair-log'>{pair_history}</div>", unsafe_allow_html=True)
 
 st.markdown("<hr>", unsafe_allow_html=True)
 
-# 5. 분석 차트 (제목 흰색, 수직 배치)
+# 4. 차트
 st.markdown('<div class="section-header">📊 Market Analysis Charts</div>', unsafe_allow_html=True)
 tf_choice = st.radio("Chart Timeframe", ["15M", "1H"], horizontal=True, key="v11_9_tf")
 itv = "60" if tf_choice == "1H" else "15"
-
 img_crypto = draw_pair_chart("BTCUSDT", "ETHUSDT", "#007bff", "#dc3545", "CRYPTO Correl", itv)
 if img_crypto: st.image(img_crypto, use_container_width=True)
 st.markdown("<br>", unsafe_allow_html=True)
 img_metal = draw_pair_chart("XAUUSDT", "XAGUSDT", "#ffc107", "#6f42c1", "METALS Correl", itv)
 if img_metal: st.image(img_metal, use_container_width=True)
 
-st.caption(f"Last Update: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} | v11.9 Full White Theme")
+st.caption(f"Last Update: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} | v11.9.7 Dual-Account Unified")
