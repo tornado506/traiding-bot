@@ -48,7 +48,7 @@ PRECISION = {
     'XAUUSDT':  2,
     'XAGUSDT':  1,
     'SOLUSDT':  1,
-    'AVAXUSDT': 2,
+    'AVAXUSDT': 0,  # 바이비트 AVAXUSDT 정수 단위만 허용
 }
 
 # ══════════════════════════════════════════════════════
@@ -59,7 +59,7 @@ PAIRS = {
         'a':        'BTCUSDT',
         'b':        'ETHUSDT',
         'val':      8000,       # 포지션 총액 ($) — 각 레그 $4,000
-        'tar':      15.0,       # 목표 순익 ($)
+        'tar':      40.0,       # 목표 순익 ($)
         'ze':       1.9,        # 진입 Z 임계값
         'max_hold': 48,         # Time Stop (시간)
     },
@@ -67,16 +67,16 @@ PAIRS = {
         'a':        'XAUUSDT',
         'b':        'XAGUSDT',
         'val':      8000,
-        'tar':      15.0,
-        'ze':       2.0,
+        'tar':      40.0,
+        'ze':       2.2,
         'max_hold': 96,
     },
     'ALTCOINS': {
         'a':        'SOLUSDT',
         'b':        'AVAXUSDT',
         'val':      8000,
-        'tar':      15.0,
-        'ze':       1.8,
+        'tar':      40.0,
+        'ze':       2.1,
         'max_hold': 72,
     },
 }
@@ -250,7 +250,10 @@ def _place_market(sym: str, side: str, qty: float,
 
 
 def place_pair_orders(orders: list, reduce: bool = False) -> bool:
-    """두 다리 병렬 실행."""
+    """
+    두 다리 병렬 실행.
+    반쪽 체결 감지 시 성공한 다리를 즉시 역청산 → 원상복구.
+    """
     results: dict = {}
 
     def worker(sym, side, qty, p_idx):
@@ -259,6 +262,22 @@ def place_pair_orders(orders: list, reduce: bool = False) -> bool:
     threads = [threading.Thread(target=worker, args=o) for o in orders]
     for t in threads: t.start()
     for t in threads: t.join()
+
+    failed  = [sym for sym, ok in results.items() if not ok]
+    success = [sym for sym, ok in results.items() if ok]
+
+    if failed and not reduce:
+        # 진입 주문에서만 역청산 (청산 주문 실패는 다음 루프에서 재시도)
+        log(f"⚠️ 반쪽 체결 감지! 실패:{failed} → 성공 다리 역청산 중")
+        side_map = {o[0]: o[1] for o in orders}
+        qty_map  = {o[0]: o[2] for o in orders}
+        idx_map  = {o[0]: o[3] for o in orders}
+        for sym in success:
+            rev = 'Sell' if side_map[sym].lower() == 'buy' else 'Buy'
+            _place_market(sym, rev, qty_map[sym], idx_map[sym], reduce=True)
+        # 무한 루프 방지: 역청산 후 쿨타임 강제 적용
+        # last_close는 메인 루프에서 pid를 모르므로 반환값으로 처리
+        return False
 
     return all(results.values())
 
@@ -270,7 +289,7 @@ def main():
     load_state()
 
     log("=" * 60)
-    log("🚀 Pair Engine v13.0 Final [Z-Score + Time Stop]")
+    log("🚀 Pair Engine v13.2 Final [Z-Score + Time Stop]")
     for pid, c in PAIRS.items():
         log(f"   {pid}: {c['a']}/{c['b']} "
             f"ze={c['ze']} val=${c['val']} "
@@ -365,6 +384,10 @@ def main():
                             entry_time[pid]  = time.time()
                             entry_side[pid]  = 1 if z > 0 else -1
                             save_state()
+                        else:
+                            # 반쪽 체결 역청산 후 쿨타임 강제 적용 (무한루프 방지)
+                            last_close[pid] = time.time()
+                            log(f"⚠️ [{pid}] 진입 실패 — {COOL_DOWN}초 쿨타임 적용")
 
                     cool_remain = max(0, COOL_DOWN - (now_t - last_close[pid]))
                     closed_mark = "💤" if (pid == 'METALS' and metals_closed) else ""
