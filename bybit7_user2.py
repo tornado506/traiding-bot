@@ -68,19 +68,10 @@ session = HTTP(
 )
 
 CONFIGS = {
-    "BTCUSDT": {"intervals": [1200, 1200, 1200, 1600, 1600, 2000], "tick_size": 1, "qty_step": 3, "min_unit": 0.01},
-    "XAUUSDT": {"intervals": [60,   60,   60,   90,   90,   120],  "tick_size": 2, "qty_step": 2, "min_unit": 0.2},
+    "BTCUSDT": {"intervals": [1200, 1200, 1200, 1600, 2000, 2000], "tick_size": 1, "qty_step": 3, "min_unit": 0.01},   # 5->6회차 2000불로 확대
+    "XAUUSDT": {"intervals": [60,   60,   60,   90,   120,   120],  "tick_size": 2, "qty_step": 2, "min_unit": 0.2},    # 5->6회차 120불로 확대
         # [70%] 이더리움: 약 $540 가치 (시세 $2,500 기준 0.22개)
-    "ETHUSDT": {"intervals": [80, 80, 80, 120, 120, 150], "tick_size": 2, "qty_step": 2, "min_unit": 0.2},
-
-    # [70%] 솔라나: 약 $548 가치 (시세 $84.0 기준)
-    "SOLUSDT": {"intervals": [1.2, 1.2, 1.2, 1.8, 1.8, 2.5], "tick_size": 3, "qty_step": 1, "min_unit": 6},
-
-    # [70%] 실버: 약 $548 가치 (시세 $75.4 기준)
-    "XAGUSDT": {"intervals": [1.1, 1.1, 1.1, 1.5, 1.5, 2.0], "tick_size": 3, "qty_step": 1, "min_unit": 7},
-
-    # [70%] 도지코인: 약 $548 가치 (시세 $0.108 기준)
-    "DOGEUSDT": {"intervals": [0.0016, 0.0016, 0.0016, 0.0025, 0.0025, 0.003], "tick_size": 5, "qty_step": 0, "min_unit": 5000},
+    "ETHUSDT": {"intervals": [80, 80, 80, 120, 150, 150], "tick_size": 2, "qty_step": 2, "min_unit": 0.2},         # 5->6회차 150불로 확대
 }
 
 MAX_STEP          = 7
@@ -288,7 +279,13 @@ class FinalSniperBotV7:
                                     qty=str(l_qty), price=str(target_p), timeInForce="PostOnly", positionIdx=p_idx)
 
                 if step >= HEDGE_START_STEP:
-                    hedge_qty = round(l_qty * 0.5, conf["qty_step"])
+                    # 6회차(step=6) 부터는 추가 물량의 100%를 헷징 (l_qty 전체)
+                    # 5회차(step=5) 는 기존대로 50%만 헷징
+                    if step >= 6:
+                        hedge_qty = l_qty 
+                    else:
+                        hedge_qty = round(l_qty * 0.5, conf["qty_step"])
+                    
                     if hedge_qty > 0:
                         # Bybit V5 규격: orderType="Market" + triggerPrice 조합이
                         # 조건부 스탑 주문으로 처리됨. "StopMarket"은 잘못된 타입명.
