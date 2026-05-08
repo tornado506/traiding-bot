@@ -1,212 +1,220 @@
-import io, os, re, time
-from datetime import datetime
+import io, os, re, datetime, streamlit as st
 import pandas as pd
-import streamlit as st
+import numpy as np
+import streamlit.components.v1 as components
 from pybit.unified_trading import HTTP
 from streamlit_autorefresh import st_autorefresh
 
 # [1. 설정 및 연결]
-# 계정 1: 메인 봇 (bybit7.py / 원금 $50,000)
 K1, S1 = "O1QpHJH4wdsjPiCe1x", "XdHD6eGaNz1iSnLF0j6nVEETZMDiSvGnai75"
 ss1 = HTTP(testnet=False, demo=True, api_key=K1, api_secret=S1)
 ss1.endpoint = "https://api-demo.bybit.com"
 
-# 계정 2: 페어 봇 (bybit_pair.py / 원금 $5,000)
 K2, S2 = "PdCEy7g1TSfU5SY5aQ", "lYE2y2y7c79wG3K0kntZiwgwDwhdHY6mNUHo"
 ss2 = HTTP(testnet=False, demo=True, api_key=K2, api_secret=S2)
 ss2.endpoint = "https://api-demo.bybit.com"
 
 START_CASH_MAIN = 50000.0
 START_CASH_SUB  = 5000.0
-
-# 로그 파일 경로 설정
-LOG_FILES = {"MAIN_LOG": "bybit7.log", "PAIR_LOG": "pair_bot.log"}
+LOG_FILES = {"MAIN_LOG": "bybit7.log"}
 FEE_RATE = 0.0006 
 
-st.set_page_config(page_title="Sniper Bot Center v13.0", layout="wide")
-# 5초마다 실시간 업데이트
-st_autorefresh(interval=5000, key="refresh_v13_final")
+PAIR_GROUPS = [
+    ("BTCUSDT", "ETHUSDT", "CRYPTO PAIR"),
+    ("XAUUSDT", "XAGUSDT", "METALS PAIR"),
+    ("SOLUSDT", "AVAXUSDT", "ALTCOINS PAIR")
+]
 
-# [2. CSS 스타일]
-st.markdown("""
-<style>
-.stApp {background-color: #0e1117 !important;}
-[data-testid="stHeader"], [data-testid="stToolbar"] {display: none !important;}
-.block-container {padding-top: 1rem !important; max-width: 95% !important; margin: 0 auto !important;}
-* {font-family: 'Courier New', monospace; color: #ffffff !important;}
+st.set_page_config(page_title="Sniper Bot Monitor v17.8", layout="wide")
+st_autorefresh(interval=5000, key="refresh_final_v17_8")
 
-/* 코드박스/흰색 하이라이트 버그 완전 차단 */
-code, pre { background-color: transparent !important; border: none !important; color: inherit !important; padding: 0 !important; margin: 0 !important; }
+# --- [2. 데이터 사이언스 로직] ---
 
-.total-balance-card {
-    background: linear-gradient(135deg, #1e2631 0%, #0e1117 100%);
-    padding: 25px; border-radius: 15px; text-align: center;
-    border: 1px solid #3e4452; margin-bottom: 30px;
-}
-.status-container {
-    background-color: #161b22 !important;
-    padding: 20px; border-radius: 12px;
-    border: 1px solid #30363d !important;
-    margin-bottom: 30px;
-}
-.pos-row {
-    display: flex; align-items: center;
-    padding: 8px 0; border-bottom: 1px solid #222;
-    font-size: 14px;
-}
-.col-time { width: 150px; color: #8b949e; }
-.col-sym  { width: 190px; font-weight: bold; }
-.col-net  { width: 160px; text-align: right; margin-right: 25px; }
-.col-qty  { width: 140px; }
-.col-avg  { width: 160px; }
+def get_more_closed_pnl(ss_client, pages=3):
+    all_results = []
+    cursor = ""
+    for _ in range(pages):
+        try:
+            res = ss_client.get_closed_pnl(category="linear", limit=200, cursor=cursor)['result']
+            all_results.extend(res.get('list', []))
+            cursor = res.get('nextPageCursor', "")
+            if not cursor: break
+        except: break
+    return all_results
 
-.log-box {
-    background-color: #000000 !important;
-    color: #00ffc8 !important;
-    padding: 15px; border-radius: 8px;
-    white-space: pre-wrap; font-size: 13px; line-height: 1.5;
-    height: 450px; overflow-y: auto; border: 1px solid #1a1c24;
-    margin-bottom: 25px;
-}
-.pair-box { color: #ff9800 !important; border-left: 4px solid #ff9800 !important; }
-.profit-plus { color: #00ffc8 !important; font-weight: bold; }
-.profit-minus { color: #ff4b4b !important; font-weight: bold; }
-.rsi-tag { color: #00ffc8 !important; font-weight: bold; margin-right: 20px; font-size: 15px; }
-.alive-tag { color: #00ffc8 !important; font-size: 14px; margin-left: 15px; font-weight: bold; }
-.dead-tag { color: #ff4b4b !important; font-size: 14px; margin-left: 15px; font-weight: bold; }
-</style>
-""", unsafe_allow_html=True)
-
-# --- [3] 데이터 처리 함수 ---
-
-def check_bot_alive(file_name):
-    """
-    pgrep 명령어를 사용하여 시스템 전체에서 해당 파일이 실행 중인지 확인.
-    리눅스 서버에서 프로세스를 감시하는 가장 확실한 방법입니다.
-    """
+def get_full_dashboard_data():
     try:
-        # pgrep -f 는 파일명이 포함된 전체 실행 커맨드를 검색합니다.
-        exit_code = os.system(f"pgrep -f {file_name} > /dev/null")
-        return exit_code == 0 # 0이면 살아있음, 그 외엔 죽었음
-    except:
-        return False
+        bal1 = ss1.get_wallet_balance(accountType="UNIFIED", coin="USDT")['result']['list'][0]
+        cash1 = float(bal1['coin'][0]['walletBalance'])
+        pos1 = ss1.get_positions(category="linear", settleCoin="USDT", limit=50)['result']['list']
+        pnl1_sum = sum(float(p.get('unrealisedPnl', 0)) for p in pos1 if float(p.get("size", 0)) > 0)
 
-def get_rsi_live(symbol):
-    try:
-        r = ss1.get_kline(category="linear", symbol=symbol, interval="15", limit=100)["result"]["list"]
-        df = pd.DataFrame(r, columns=["ts","o","h","l","c","v","t"]).apply(pd.to_numeric).iloc[::-1]
-        delta = df['c'].diff()
-        gain = delta.where(delta > 0, 0); loss = -delta.where(delta < 0, 0)
-        avg_gain = gain.ewm(alpha=1/14, min_periods=14, adjust=False).mean()
-        avg_loss = loss.ewm(alpha=1/14, min_periods=14, adjust=False).mean()
-        rsi = 100 - (100 / (1 + (avg_gain / (avg_loss + 1e-9))))
-        return round(rsi.iloc[-1], 1)
-    except: return "--"
+        bal2 = ss2.get_wallet_balance(accountType="UNIFIED", coin="USDT")['result']['list'][0]
+        cash2 = float(bal2['coin'][0]['walletBalance'])
+        pos2 = ss2.get_positions(category="linear", settleCoin="USDT", limit=50)['result']['list']
+        pnl2_sum = sum(float(p.get('unrealisedPnl', 0)) for p in pos2 if float(p.get("size", 0)) > 0)
 
-def get_profit_data():
-    try:
-        b1 = ss1.get_wallet_balance(accountType="UNIFIED", coin="USDT")
-        c1 = float(b1['result']['list'][0]['coin'][0]['walletBalance'])
-        p1 = ss1.get_positions(category="linear", settleCoin="USDT")['result']['list']
-        u1 = sum(float(pos.get('unrealisedPnl', 0)) for pos in p1 if float(pos.get("size", 0)) > 0)
+        total_wallet = (cash1 + pnl1_sum) + (cash2 + pnl2_sum)
+        total_net = total_wallet - (START_CASH_MAIN + START_CASH_SUB)
+
+        display_items = []
+        for p in pos1:
+            if float(p.get("size", 0)) > 0:
+                display_items.append({"is_pair": False, "sym": p['symbol'], "side": p['side'], "pnl": float(p['unrealisedPnl']), "qty": p['size'], "avg": p['avgPrice']})
         
-        b2 = ss2.get_wallet_balance(accountType="UNIFIED", coin="USDT")
-        c2 = float(b2['result']['list'][0]['coin'][0]['walletBalance'])
-        p2 = ss2.get_positions(category="linear", settleCoin="USDT")['result']['list']
-        u2 = sum(float(pos.get('unrealisedPnl', 0)) for pos in p2 if float(pos.get("size", 0)) > 0)
+        sub_pos_map = {p['symbol']: p for p in pos2 if float(p.get("size", 0)) > 0}
+        processed_sub_syms = set()
+        for sym_a, sym_b, label in PAIR_GROUPS:
+            if sym_a in sub_pos_map or sym_b in sub_pos_map:
+                pa, pb = sub_pos_map.get(sym_a), sub_pos_map.get(sym_b)
+                display_items.append({
+                    "is_pair": True, "label": label,
+                    "sym_a": sym_a, "side_a": pa['side'] if pa else "--", "pnl_a": float(pa['unrealisedPnl']) if pa else 0.0,
+                    "sym_b": sym_b, "side_b": pb['side'] if pb else "--", "pnl_b": float(pb['unrealisedPnl']) if pb else 0.0
+                })
+                processed_sub_syms.update([sym_a, sym_b])
+        for sym, p in sub_pos_map.items():
+            if sym not in processed_sub_syms:
+                display_items.append({"is_pair": False, "sym": sym, "side": p['side'], "pnl": float(p['unrealisedPnl']), "qty": p['size'], "avg": p['avgPrice']})
+
+        daily_pnl = {}
+        for s in [ss1, ss2]:
+            all_closed_data = get_more_closed_pnl(s, pages=3) 
+            for e in all_closed_data:
+                dt = datetime.datetime.fromtimestamp(int(e['updatedTime'])/1000).strftime('%m.%d')
+                daily_pnl[dt] = daily_pnl.get(dt, 0) + float(e['closedPnl'])
         
-        return (c1+u1), (c1+u1-START_CASH_MAIN), (c2+u2), (c2+u2-START_CASH_SUB), (p1+p2)
-    except: return 0,0,0,0, []
+        chart_data = []
+        for i in range(13, -1, -1):
+            d_str = (datetime.datetime.now() - datetime.timedelta(days=i)).strftime('%m.%d')
+            chart_data.append({"date": d_str, "pnl": daily_pnl.get(d_str, 0.0)})
 
-# --- [4] 화면 렌더링 ---
-st.markdown('<h2 style="text-align:center; font-size:30px; margin-bottom:20px;">🤖 Sniper Bot Unified Center</h2>', unsafe_allow_html=True)
+        return {"net": total_net, "wallet": total_wallet, "items": display_items, "chart": chart_data}
+    except: return None
 
-curr1, prof1, curr2, prof2, all_positions = get_profit_data()
+# --- [3] UI 조립 ---
+d = get_full_dashboard_data()
 
-# 1. 듀얼 실시간 수익금 카드
-c1_class = "profit-plus" if prof1 >= 0 else "profit-minus"
-c2_class = "profit-plus" if prof2 >= 0 else "profit-minus"
-st.markdown(f"""
-<div class="total-balance-card">
-    <div style="color:#8b949e; font-size:13px; margin-bottom:12px;">Real-time Cash + PnL (Main / Sub)</div>
-    <span style="font-size:28px; font-weight:bold;">${curr1:,.2f}</span> 
-    <span class="{c1_class}" style="font-size:20px;">({"+" if prof1>=0 else ""}{prof1:,.2f})</span>
-    <span style="font-size:28px; margin: 0 20px;">/</span>
-    <span style="font-size:28px; font-weight:bold;">${curr2:,.2f}</span> 
-    <span class="{c2_class}" style="font-size:20px;">({"+" if prof2>=0 else ""}{prof2:,.2f})</span>
-</div>
-""", unsafe_allow_html=True)
+if d:
+    def get_color(val): return "#00FF94" if val >= 0 else "#ff4b4b"
 
-# 2. 실시간 지표 및 포지션 상태
-st.markdown('<h4 style="margin-bottom:12px;">📡 Real-time Market & Position Status</h4>', unsafe_allow_html=True)
-now_dt = datetime.now().strftime('%m-%d %H:%M:%S')
-symbols = ["BTCUSDT", "ETHUSDT", "SOLUSDT", "XAUUSDT", "XAGUSDT", "DOGEUSDT"]
-rsi_html = "".join([f'<span class="rsi-tag">[{s[:3]}:{get_rsi_live(s)}]</span>' for s in symbols])
+    pos_html = ""
+    for item in d['items']:
+        if item['is_pair']:
+            total_pnl = item['pnl_a'] + item['pnl_b']
+            border_c = get_color(total_pnl)
+            color_a = get_color(item['pnl_a'])
+            color_b = get_color(item['pnl_b'])
+            
+            pos_html += f"""
+            <div style="background:rgba(255,255,255,0.03); border-radius:16px; padding:16px; margin-bottom:12px; border:1px solid {border_c}44; border-left:4px solid {border_c};">
+                <div style="display:flex; justify-content:space-between; align-items:center;">
+                    <div>
+                        <div style="font-size:13px; font-weight:700; color:#ffffff;">{item['label']}</div>
+                        <div style="font-size:10px; color:#849586; margin-top:2px;">
+                            <span style="color:{color_a}">{item['sym_a']}</span><span style="color:#ffffff;">({item['side_a']})</span> 
+                            <span style="color:#555; margin:0 4px;">/</span> 
+                            <span style="color:{color_b}">{item['sym_b']}</span><span style="color:#ffffff;">({item['side_b']})</span>
+                        </div>
+                    </div>
+                    <div style="text-align:right;">
+                        <div style="font-weight:800; font-size:16px;">
+                            <span style="color:{color_a};">{item['pnl_a']:+.1f}</span> 
+                            <span style="color:#555; margin:0 4px;">/</span> 
+                            <span style="color:{color_b};">{item['pnl_b']:+.1f}$</span>
+                        </div>
+                        <div style="font-size:9px; color:#849586;">Total: {total_pnl:+.2f}$</div>
+                    </div>
+                </div>
+            </div>
+            """
+        else:
+            color = get_color(item['pnl'])
+            pos_html += f"""
+            <div style="background:rgba(255,255,255,0.03); border-radius:16px; padding:16px; margin-bottom:12px; border:1px solid {color}44; border-left:4px solid {color};">
+                <div style="display:flex; justify-content:space-between; align-items:center;">
+                    <div style="display:flex; align-items:center; gap:12px;">
+                        <div style="background:rgba(255,255,255,0.05); padding:8px; border-radius:8px; display:flex;">
+                            <span class="material-symbols-outlined" style="color:{color}; font-size:20px;">{"trending_up" if item['pnl']>=0 else "trending_down"}</span>
+                        </div>
+                        <div>
+                            <div style="font-size:13px; font-weight:700; color:#ffffff;">{item['sym']}</div>
+                            <div style="font-size:10px; color:#849586;"><span style="color:#ffffff;">({item['side']})</span> • Qty: {item['qty']}</div>
+                        </div>
+                    </div>
+                    <div style="text-align:right;">
+                        <div style="color:{color}; font-weight:800; font-size:16px;">{item['pnl']:+.2f}$</div>
+                        <div style="font-size:9px; color:#555;">Avg: {float(item['avg']):.1f}</div>
+                    </div>
+                </div>
+            </div>
+            """
 
-pos_html_list = []
-for p in all_positions:
-    sz = float(p.get("size", 0))
-    if sz > 0:
-        sym, side, pnl = p['symbol'], p['side'], float(p.get('unrealisedPnl', 0))
-        p_color = "#00ffc8" if pnl >= 0 else "#ff4b4b"
-        avg_p = float(p["avgPrice"])
-        pos_html_list.append(f'<div class="pos-row"><div class="col-time">[{now_dt}]</div><div class="col-sym">🛰️ {sym} ({side})</div><div class="col-net">Net: <span style="color:{p_color}; font-weight:bold;">{pnl:>7.1f}$</span></div><div class="col-qty">Qty: {sz}</div><div class="col-avg">Avg: {avg_p:.2f}</div></div>')
-st.markdown(f'<div class="status-container"><div style="margin-bottom:20px; padding-bottom:15px; border-bottom:1px dashed #444;">{rsi_html}</div>{"".join(pos_html_list) if pos_html_list else "<div style=\"color:#8b949e; padding:10px;\">오픈된 포지션이 없습니다.</div>"}</div>', unsafe_allow_html=True)
+    max_p = max([abs(x['pnl']) for x in d['chart']] + [15.0])
+    bars_html = ""
+    for x in d['chart']:
+        h = max(min((abs(x['pnl']) / max_p) * 60, 60), 1)
+        c = get_color(x['pnl'])
+        bars_html += f'<div style="flex:1; display:flex; flex-direction:column; align-items:center; height:100%; justify-content:flex-end;"><div style="font-size:6px; color:{c}; margin-bottom:3px; font-weight:bold;">{f"{x["pnl"]:+.1f}" if abs(x["pnl"])>0.1 else ""}</div><div style="width:14px; background:{c}; height:{h}%; border-radius:1.5px; opacity:0.8;"></div><div style="font-size:7px; color:#555; margin-top:8px;">{x["date"]}</div></div>'
 
-# 3. 메인봇 트레이딩 로그 (pgrep 기반 감시)
-is_main_alive = check_bot_alive("bybit7.py")
-status_main = "<span class='alive-tag'>🟢 봇 감시 중</span>" if is_main_alive else "<span class='dead-tag'>🔴 봇 중단됨</span>"
-st.markdown(f'<h4 style="margin-bottom:12px;">🤖 Main Bot History {status_main}</h4>', unsafe_allow_html=True)
-main_log_content = "로그 파일 대기 중..."
-if os.path.exists(LOG_FILES["MAIN_LOG"]):
-    with open(LOG_FILES["MAIN_LOG"], "r", encoding="utf-8", errors="ignore") as f:
-        lines = f.readlines()
-        processed = []
-        for l in reversed(lines):
-            if any(k in l for k in ["🎯", "🚀", "💰", "📉", "익절", "진입", "전략", "본전"]):
-                t_m = re.search(r'(\d{4})-(\d{2})-(\d{2}) (\d{2}:\d{2}:\d{2})', l)
-                d_t = f"[{t_m.group(2)}-{t_m.group(3)} {t_m.group(4)}]" if t_m else ""
-                msg = l.split(" - ")[-1].strip() if " - " in l else l.strip()
-                processed.append(f"{d_t} {msg}")
-            if len(processed) >= 60: break
-        main_log_content = "\n".join(processed)
-st.markdown(f'<div class="log-box">{main_log_content}</div>', unsafe_allow_html=True)
-
-# 4. 페어봇 트레이딩 로그 (pgrep 기반 감시)
-is_pair_alive = check_bot_alive("bybit_pair.py")
-status_pair = "<span class='alive-tag'>🟢 봇 감시 중</span>" if is_pair_alive else "<span class='dead-tag'>🔴 봇 중단됨</span>"
-st.markdown(f'<h4 style="margin-bottom:12px;">⚖️ Pair Bot History {status_pair}</h4>', unsafe_allow_html=True)
-pair_log_content = "로그 파일 대기 중..."
-if os.path.exists(LOG_FILES["PAIR_LOG"]):
-    with open(LOG_FILES["PAIR_LOG"], "r", encoding="utf-8", errors="ignore") as f:
-        lines = f.readlines()
-        processed_pair = []
-        for l in reversed(lines):
-            if "🔎 감시중" in l or any(k in l for k in ["🎯", "💰", "🚨"]):
-                t_m = re.search(r'\[(\d{2}-\d{2}) (\d{2}:\d{2}:\d{2})\]', l)
-                if not t_m:
-                    t_m = re.search(r'(\d{4})-(\d{2})-(\d{2}) (\d{2}:\d{2}:\d{2})', l)
-                    display_ts = f"[{t_m.group(2)}-{t_m.group(3)} {t_m.group(4)}]" if t_m else f"[{now_dt}]"
-                else:
-                    display_ts = f"[{t_m.group(1)} {t_m.group(2)}]"
-                
-                msg = l.split("] ")[-1].strip() if "] " in l else l.strip()
-                msg = msg.replace("🔎 감시중 | ", "")
-                
-                if "Z=" in msg:
-                    secs = msg.split('|')
-                    compact = []
-                    for s in secs:
-                        label = "CRYPTO" if "CRYPTO" in s else "METALS" if "METALS" in s else "ALTS" if "ALTCOINS" in s else ""
-                        z_v = re.search(r'Z=([\d.-]+)', s); net = re.search(r'Net=([\d.-]+)\$', s)
-                        if label and z_v:
-                            n_s = f"({net.group(1)}$)" if net else ""
-                            compact.append(f"{label}{n_s}:Z={z_v.group(1)}")
-                    msg = " | ".join(compact) if compact else msg
-                
-                processed_pair.append(f"{display_ts} {msg}")
-            if len(processed_pair) >= 80: break
-        pair_log_content = "\n".join(processed_pair)
-st.markdown(f'<div class="log-box pair-box">{pair_log_content}</div>', unsafe_allow_html=True)
-
-st.caption(f"Last Update: {now_dt} | v13.0 System-Root Tracking Edition")
+    full_html = f"""
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800;900&display=swap" rel="stylesheet">
+        <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@24,400,0,0" rel="stylesheet">
+        <style>
+            body {{ background-color: #0A0C10; margin: 0; padding: 0; font-family: 'Inter', sans-serif; color: #dae2fd; overflow-x: hidden; }}
+            .container {{ max-width: 460px; margin: 0 auto; padding: 45px 15px 120px 15px; }}
+            .glass-card {{ background: rgba(255, 255, 255, 0.04); border: 1px solid rgba(255, 255, 255, 0.1); border-radius: 20px; padding: 20px; margin-bottom: 20px; }}
+            pre, code {{ background: transparent !important; color: inherit !important; padding: 0 !important; }}
+            .nav-bar {{ position: fixed; bottom: 0; left: 50%; transform: translateX(-50%); width: 100%; max-width: 460px; background: rgba(10,12,16,0.98); backdrop-filter: blur(20px); display: flex; justify-content: space-around; align-items: center; padding: 15px 0 35px; border-top: 1px solid rgba(255,255,255,0.1); z-index: 1000; }}
+            .nav-item {{ display: flex; flex-direction: column; align-items: center; color: #444; font-size: 9px; gap: 5px; }}
+            .nav-item.active {{ color: #00FF94; }}
+            .fab {{ background:#00FF94; width:60px; height:60px; border-radius:30px; display:flex; justify-content:center; align-items:center; box-shadow: 0 0 30px rgba(0,255,148,0.4); border: 5px solid #0A0C10; margin-top: -50px; }}
+            .material-symbols-outlined {{ font-family: 'Material Symbols Outlined' !important; }}
+        </style>
+    </head>
+    <body>
+        <div class="container">
+            <div style="display:flex; justify-content:space-between; align-items:center; padding: 0 5px 25px;">
+                <span class="material-symbols-outlined" style="color:#00FF94; font-size:30px;">chevron_left</span>
+                <div style="color:#00FF94; font-weight:900; font-size:22px; letter-spacing:3px;">RESULTS</div>
+                <span class="material-symbols-outlined" style="font-size:26px;">notifications</span>
+            </div>
+            <div class="glass-card">
+                <div style="display:flex; align-items:center;">
+                    <div style="flex:1.7;">
+                        <div style="font-size:9px; color:#849586; text-transform:uppercase; margin-bottom:7px;">Net / Wallet Income (Unified)</div>
+                        <div style="font-size:22px; font-weight:600;">
+                            <span style="color:#00FF94;">{d['net']:,.0f}<span style="font-size:11px; opacity:0.6; margin-left:2px;">USD</span></span> 
+                            <span style="opacity:0.2; margin:0 3px;">/</span>
+                            <span>{d['wallet']:,.0f}<span style="font-size:11px; opacity:0.6; margin-left:2px;">USD</span></span>
+                        </div>
+                    </div>
+                    <div style="flex:1; border-left:1px solid rgba(255,255,255,0.08); padding-left:15px;">
+                        <div style="font-size:9px; color:#849586; text-transform:uppercase; margin-bottom:7px;">Start Balance</div>
+                        <div style="font-size:22px; font-weight:600;">55,000<span style="font-size:11px; opacity:0.6; margin-left:2px;">USD</span></div>
+                    </div>
+                </div>
+            </div>
+            <div style="font-size:11px; font-weight:900; color:#849586; letter-spacing:1px; margin-bottom:15px;">ACTIVE POSITIONS (MAIN + SUB)</div>
+            {pos_html if pos_html else "<div style='color:#444; text-align:center; padding:30px;'>진입 포지션 없음</div>"}
+            <div class="glass-card" style="margin-top:20px; padding:30px 10px 20px 10px;">
+                <div style="font-size:10px; color:#849586; text-transform:uppercase; margin-bottom:30px;">Combined Revenue (14 Days)</div>
+                <div style="height:140px; display:flex; align-items:flex-end; gap:5px; padding:0 5px;">{bars_html}</div>
+            </div>
+        </div>
+        <nav class="nav-bar">
+            <div class="nav-item"><span class="material-symbols-outlined">dashboard</span><span>Home</span></div>
+            <div class="nav-item active"><span class="material-symbols-outlined">query_stats</span><span>Stats</span></div>
+            <div class="fab"><span class="material-symbols-outlined" style="color:#0A0C10; font-weight:900; font-size:32px;">rebase_edit</span></div>
+            <div class="nav-item"><span class="material-symbols-outlined">explore</span><span>Explore</span></div>
+            <div class="nav-item"><span class="material-symbols-outlined">account_tree</span><span>Logic</span></div>
+        </nav>
+    </body>
+    </html>
+    """
+    components.html(full_html, height=1100, scrolling=False)
+else:
+    st.error("API 연결 실패. 계정 상태를 확인하세요.")
