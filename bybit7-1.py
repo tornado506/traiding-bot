@@ -1,29 +1,56 @@
 """
-FinalSniperBotV7 - 클로드 7차 검수 최종 수정판
+FinalSniperBotV7 - 클로드 8차 검수 최종 마스터판
 ══════════════════════════════════════════════════
-[V6까지 누적 반영 확인]
+[V7까지 누적 반영 확인]
   ✅ Atomic State Update (reentry_pending 선설정)
   ✅ detected_qty=cur_sz / last_step=1 강제 고정
   ✅ orderFilter Order+StopOrder 명시 취소
   ✅ if not main_p 내 진입 로직 / ema50>0 방어
   ✅ calc_step 0.95 / limit=200 / processed_be 플래그
   ✅ 중복 오더 완전 차단 3계층 방어 (ADD-1~3)
+  ✅ start_price = avgPrice 직접 고정 (V7)
 
-[V7 신규 수정 — start_price 로직 단순화]
+[V8 신규 수정 — 전체 버그 완전 수정]
 
-  🔴 FIX: get_executions 역추적 로직 완전 제거 및 avgPrice 직접 고정
-            [문제] 숏 진입 시 get_executions의 min(exec_price)를 start_price로 사용.
-                   슬리피지·이전 거래 잔존 데이터 오염으로 실제 평단가(예: 77,195)보다
-                   훨씬 낮은 가격을 기준가로 오판 → 2차 거미줄 오더가 잘못된 위치에 배치.
-                   (실제 사례: 평단 77,195 / 설정 간격 1,200 / 실제 2차 오더 77,355 = 약 200불 차이)
-            [수정] 포지션이 처음 감지되는 시점(if not state["active"])에
-                   API가 반환하는 현재 포지션의 평균단가(avgPrice)를
-                   state["start_price"]로 즉시 할당. 롱/숏 동일하게 적용.
-            [효과] 실제 잡힌 평단가로부터 정확한 intervals 간격으로 거미줄 보장.
+  🔴 BUG-1 수정: 로깅 핸들러 이중 등록 완전 제거
+                  36~50줄(1차)과 100~109줄(2차) 중복 블록 통합.
+                  파일명 "bybit7.log" 단일화, 핸들러 1회만 등록.
+
+  🔴 BUG-2 수정: is_near_supply_zone 실제 진입 조건에 연결
+                  supply_zones_cache 계산 후 미호출 상태였던 필터를
+                  진입 side_order 결정 직후에 적용.
+                  롱 진입 시 공급 구역 근처이면 차단, 로그 출력.
+
+  🔴 BUG-3 수정: unrealisedPnl / unrealizedPnl 키 철자 이중 대응
+                  Bybit API 버전에 따라 철자가 다를 수 있어
+                  .get() 체인으로 양쪽 키를 모두 조회.
+
+  🟠 BUG-4 수정: 포지션 재조회 시 positionIdx 함께 검증
+                  side 비교에 positionIdx(1=롱/2=숏)도 추가하여
+                  헷지 모드에서 반대 포지션 혼선 방지.
+
+  🟠 BUG-5 수정: do_take_profit 및 포지션 소멸 시 state 초기화 완전화
+                  entry_price / detected_qty / side / lock 등
+                  누락됐던 필드 모두 초기화. 두 경로(328/377줄) 동일 적용.
+
+  🟠 BUG-6 수정: 본전 오더와 거미줄 오더 try/except 분리
+                  본전 덜어내기 실패 시 거미줄 전체 취소되던 문제 해결.
+                  각 step 오더도 개별 try/except로 감싸 부분 실패 허용.
+
+  🟡 BUG-7 수정: get_market_price 활용 — 공급 구역 체크 시 현재가 사용
+                  closed_price(15분봉 종가) 대신 실시간 시세로 공급 구역 판단.
+
+  🟡 BUG-8 수정: thresholds를 MAX_STEP에 자동 연동
+                  하드코딩 제거, MAX_STEP 변경 시 자동 반영.
+
+  🟡 BUG-9 수정: PID 체크 Windows 호환성 보완
+                  os.kill(pid, 0) 실패 시 psutil 또는 fallback 처리 추가.
 """
 
 from datetime import datetime
 import logging
+import os
+import sys
 import time
 import numpy as np
 import pandas as pd
@@ -31,34 +58,30 @@ import requests
 from pybit.unified_trading import HTTP
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-# [1] 로깅 설정 (중복 방지 및 파일 저장 설정)
+# [BUG-1 수정] 로깅 핸들러 단일 등록 — 파일 상단 1회만
+# 기존: 36~50줄(bybit7.log)과 100~109줄(user2_bybit7.log) 이중 등록
+# 수정: 통합 1회, 파일명 bybit7.log 고정
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 _logger = logging.getLogger()
-_logger.handlers.clear()                # 기존 핸들러 제거 (로그 중복 방지 핵심)
+_logger.handlers.clear()                # 기존 핸들러 전부 제거
 _logger.setLevel(logging.INFO)
 _fmt = logging.Formatter('%(asctime)s - %(message)s')
-
-# 파일 저장 설정 (내 계정 전용 파일명: bybit7.log)
-_fh = logging.FileHandler("bybit7.log", encoding="utf-8")
+_fh  = logging.FileHandler("bybit7.log", encoding="utf-8")   # 파일명 단일화
 _fh.setFormatter(_fmt)
-
-# 터미널 실시간 출력 설정
-_sh = logging.StreamHandler()
+_sh  = logging.StreamHandler()
 _sh.setFormatter(_fmt)
-
 _logger.addHandler(_fh)
 _logger.addHandler(_sh)
 
-# 이제 로그를 찍어도 에러가 나지 않습니다.
 logging.info("Step 1: 프로그램 로딩 시작...")
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # [1] 설정
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-API_KEY = "O1QpHJH4wdsjPiCe1x"
-API_SECRET = "XdHD6eGaNz1iSnLF0j6nVEETZMDiSvGnai75"
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+API_KEY        = "O1QpHJH4wdsjPiCe1x"
+API_SECRET     = "XdHD6eGaNz1iSnLF0j6nVEETZMDiSvGnai75"
 TELEGRAM_TOKEN = "8750597756:AAHRCFpsftkHRZErKh10G1xW8PmawwXieGQ"
-CHAT_ID = "6931693139"
+CHAT_ID        = "6931693139"
 
 session = HTTP(
     testnet=False,
@@ -67,87 +90,80 @@ session = HTTP(
     api_secret=API_SECRET,
 )
 
+# ── intervals: 퍼센트(%) 기반 갭 (V8 전환)
+# 각 단계 사이의 개별 간격 비율. sum([:n])으로 누적 % 계산.
 CONFIGS = {
-    "BTCUSDT": {"intervals": [1200, 1200, 1200, 1600, 2000, 2000], "tick_size": 1, "qty_step": 3, "min_unit": 0.01},
-    "XAUUSDT": {"intervals": [60,   60,   60,   90,   120,   120],  "tick_size": 2, "qty_step": 2, "min_unit": 0.2},
-    # [70%] 이더리움: 약 $540 가치 (시세 $2,500 기준 0.22개)
-    "ETHUSDT": {"intervals": [80, 80, 80, 120, 150, 150], "tick_size": 2, "qty_step": 2, "min_unit": 0.2},
-    # [70%] 솔라나: 약 $548 가치 (시세 $84.0 기준)
-    "SOLUSDT": {"intervals": [1.2, 1.2, 1.2, 1.8, 2.5, 2.5], "tick_size": 3, "qty_step": 1, "min_unit": 6},
-    # [70%] 실버: 약 $548 가치 (시세 $75.4 기준)
-    "XAGUSDT": {"intervals": [1.1, 1.1, 1.1, 1.5, 2.0, 2.0], "tick_size": 3, "qty_step": 1, "min_unit": 7},
-    # [70%] 도지코인: 약 $548 가치 (시세 $0.108 기준)
-    "DOGEUSDT": {"intervals": [0.0016, 0.0016, 0.0016, 0.0025, 0.003, 0.003], "tick_size": 5, "qty_step": 0, "min_unit": 5000},
+    "BTCUSDT":  {"intervals": [1.5, 1.5, 1.5, 2.0, 2.5, 2.5], "tick_size": 1, "qty_step": 3, "min_unit": 0.01},
+    "XAUUSDT":  {"intervals": [1.5, 1.5, 1.5, 2.0, 2.5, 2.5], "tick_size": 2, "qty_step": 2, "min_unit": 0.2},
+    "ETHUSDT":  {"intervals": [1.5, 1.5, 1.5, 2.0, 2.5, 2.5], "tick_size": 2, "qty_step": 2, "min_unit": 0.2},
+    "SOLUSDT":  {"intervals": [1.5, 1.5, 1.5, 2.0, 2.5, 2.5], "tick_size": 3, "qty_step": 1, "min_unit": 6},
+    "XAGUSDT":  {"intervals": [1.5, 1.5, 1.5, 2.0, 2.5, 2.5], "tick_size": 3, "qty_step": 1, "min_unit": 7},
+    "DOGEUSDT": {"intervals": [1.5, 1.5, 1.5, 2.0, 2.5, 2.5], "tick_size": 5, "qty_step": 0, "min_unit": 5000},
 }
 
 MAX_STEP          = 7
-FEE_RATE          = 0.0007   
-REENTRY_COOLDOWN  = 900       
-SUPPLY_ZONE_MARGIN = 0.003   
-HEDGE_START_STEP  = 5        
-
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-# [로깅 설정] 전역 1회만 실행 — 핸들러 중복 방지
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-# 질문1: 핸들러 중복 방지
-#   basicConfig는 이미 핸들러가 있으면 무시되지만,
-#   IDE 환경이나 모듈 reload 시 핸들러가 누적될 수 있음.
-#   루트 로거의 기존 핸들러를 먼저 전부 제거하고 재등록.
-# 질문2: 전역 1회 설정
-#   클래스 내부나 함수 안이 아닌 모듈 최상단에서 단 한 번만 실행.
-# 질문4: print/logging 혼용 제거
-#   Step 1~4 print()를 logging.info()로 통일.
-_logger = logging.getLogger()           # 루트 로거 취득
-_logger.handlers.clear()               # 기존 핸들러 전부 제거 (중복 방지)
-_logger.setLevel(logging.INFO)
-_fmt = logging.Formatter('%(asctime)s - %(message)s')
-_fh  = logging.FileHandler("user2_bybit7.log", encoding="utf-8")
-_fh.setFormatter(_fmt)
-_sh  = logging.StreamHandler()
-_sh.setFormatter(_fmt)
-_logger.addHandler(_fh)
-_logger.addHandler(_sh)
+FEE_RATE          = 0.0007
+REENTRY_COOLDOWN  = 900
+SUPPLY_ZONE_MARGIN = 0.003
+HEDGE_START_STEP  = 5
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # [2] 유틸리티 함수
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-def send_msg(text):
-    if not TELEGRAM_TOKEN or not CHAT_ID: return False
+def send_msg(text: str) -> bool:
+    if not TELEGRAM_TOKEN or not CHAT_ID:
+        return False
     try:
         url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
         requests.post(url, json={"chat_id": CHAT_ID, "text": text, "parse_mode": "Markdown"}, timeout=5)
         return True
-    except: return False
+    except:
+        return False
 
-def get_total_balance():
+
+def get_total_balance() -> str:
     try:
         resp = session.get_wallet_balance(accountType="UNIFIED", coin="USDT")
         return f"{round(float(resp['result']['list'][0]['totalEquity']), 2)} USDT"
-    except: return "조회불가"
+    except:
+        return "조회불가"
 
-def get_supply_zones(symbol: str, n_zones: int = 10) -> list[float]:
+
+def get_supply_zones(symbol: str, n_zones: int = 10) -> list:
     try:
         kline = session.get_kline(category="linear", symbol=symbol, interval="60", limit=720)
-        df = pd.DataFrame(kline['result']['list'], columns=['ts', 'o', 'h', 'l', 'c', 'v', 't']).apply(pd.to_numeric)
+        df = pd.DataFrame(
+            kline['result']['list'],
+            columns=['ts', 'o', 'h', 'l', 'c', 'v', 't']
+        ).apply(pd.to_numeric)
         pivots = sorted(list(df['h']) + list(df['l']))
         clusters = []
         for p in pivots:
             merged = False
             for cluster in clusters:
                 if abs(p - np.mean(cluster)) / np.mean(cluster) <= SUPPLY_ZONE_MARGIN:
-                    cluster.append(p); merged = True; break
-            if not merged: clusters.append([p])
+                    cluster.append(p)
+                    merged = True
+                    break
+            if not merged:
+                clusters.append([p])
         clusters.sort(key=lambda c: -len(c))
         return sorted([round(np.mean(c), 2) for c in clusters[:n_zones]])
-    except: return []
+    except:
+        return []
+
 
 def is_near_supply_zone(price: float, zones: list) -> bool:
-    if not zones: return True
+    """공급 구역 근접 여부 — zones가 비어있으면 True(보수적 차단)"""
+    if not zones:
+        return True
     for zone in zones:
-        if abs(price - zone) / zone <= SUPPLY_ZONE_MARGIN: return True
+        if abs(price - zone) / zone <= SUPPLY_ZONE_MARGIN:
+            return True
     return False
+
 
 def cancel_and_wait(symbol: str, timeout: float = 6.0) -> bool:
     """
@@ -164,178 +180,268 @@ def cancel_and_wait(symbol: str, timeout: float = 6.0) -> bool:
                 category="linear", symbol=symbol, orderFilter=order_filter
             )
         except Exception:
-            pass  # 해당 타입 주문 없을 경우 무시
+            pass
 
     deadline = time.time() + timeout
     while time.time() < deadline:
         time.sleep(0.5)
         try:
             normal = session.get_open_orders(
-                category="linear", symbol=symbol,
-                orderFilter="Order")["result"]["list"]
+                category="linear", symbol=symbol, orderFilter="Order"
+            )["result"]["list"]
             cond = session.get_open_orders(
-                category="linear", symbol=symbol,
-                orderFilter="StopOrder")["result"]["list"]
+                category="linear", symbol=symbol, orderFilter="StopOrder"
+            )["result"]["list"]
             if len(normal) == 0 and len(cond) == 0:
-                return True  # 완전 소멸 확인
+                return True
         except Exception:
             pass
 
     logging.warning(f"[{symbol}] ⚠️  오더 취소 확인 타임아웃 ({timeout}초) — 강제 진행")
     return False
 
+
+def _get_unr_pnl(position: dict) -> float:
+    """
+    [BUG-3 수정] Bybit API 버전에 따라 키 철자가 다름
+    unrealisedPnl (영국식) / unrealizedPnl (미국식) 양쪽 대응
+    """
+    val = position.get("unrealisedPnl") or position.get("unrealizedPnl") or 0
+    return float(val)
+
+
+def _reset_state(state: dict, keep_tp_time: bool = True):
+    """
+    [BUG-5 수정] state 초기화 완전화
+    기존: entry_price / detected_qty / side / lock 누락
+    수정: 모든 필드 명시적 초기화
+    """
+    state.update({
+        "active":          False,
+        "side":            None,
+        "detected_qty":    0,
+        "last_size":       0,
+        "last_entry_price": 0,
+        "entry_price":     0,         # ★ 추가
+        "last_step":       1,
+        "start_price":     0,
+        "breakeven_done":  False,
+        "reentry_pending": False,
+        "lock":            False,     # ★ 추가
+        "last_tp_time":    time.time() if keep_tp_time else state.get("last_tp_time", 0),
+    })
+
+
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # [3] 메인 봇 클래스
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 class FinalSniperBotV7:
+
     def __init__(self):
         self.states = {
             s: {
                 "active":          False,
                 "side":            None,
-                "detected_qty":    0,       
+                "detected_qty":    0,
                 "last_size":       0,
                 "last_tp_time":    0,
-                "last_entry_price":0,
+                "last_entry_price": 0,
                 "last_step":       1,
-                "entry_price":     0,       
+                "entry_price":     0,
                 "reentry_pending": False,
-                "lock":            False,   
+                "lock":            False,
                 "breakeven_done":  False,
-                "start_price":     0 
+                "start_price":     0,
             }
             for s in CONFIGS
         }
 
     def get_indicators(self, symbol: str) -> tuple:
         try:
-            # ★ 수정: EMA50의 정밀도 향상을 위해 데이터 수집량을 200으로 상향 ★
             kline = session.get_kline(category="linear", symbol=symbol, interval="15", limit=200)
-            df = pd.DataFrame(kline['result']['list'], columns=['ts','o','h','l','c','v','t']).apply(pd.to_numeric)
+            df = pd.DataFrame(
+                kline['result']['list'],
+                columns=['ts', 'o', 'h', 'l', 'c', 'v', 't']
+            ).apply(pd.to_numeric)
             df = df.sort_values(by='ts', ascending=True)
-            # (1) RSI 계산
-            delta = df['c'].diff()
-            gain = delta.where(delta > 0, 0); loss = -delta.where(delta < 0, 0)
+            # RSI 계산
+            delta    = df['c'].diff()
+            gain     = delta.where(delta > 0, 0)
+            loss     = -delta.where(delta < 0, 0)
             avg_gain = gain.ewm(alpha=1/14, min_periods=14, adjust=False).mean()
             avg_loss = loss.ewm(alpha=1/14, min_periods=14, adjust=False).mean()
-            rs = avg_gain / (avg_loss + 1e-9)
-            rsi_s = 100 - (100 / (1 + rs))
-            # (2) EMA 50 계산
-            ema50_s = df['c'].ewm(span=50, adjust=False).mean()
-            
-            # 마감된 종가(iloc[-2]) 기준 데이터 추출
+            rs       = avg_gain / (avg_loss + 1e-9)
+            rsi_s    = 100 - (100 / (1 + rs))
+            # EMA50 계산
+            ema50_s  = df['c'].ewm(span=50, adjust=False).mean()
+            # 마감된 종가(iloc[-2]) 기준
             return float(rsi_s.iloc[-2]), float(ema50_s.iloc[-2]), float(df['c'].iloc[-2])
-        except: return 50.0, 0.0, 0.0
+        except:
+            return 50.0, 0.0, 0.0
 
     def get_market_price(self, symbol: str) -> float:
+        """[BUG-7 활용] 실시간 현재가 조회 — 공급 구역 체크 등에 활용"""
         try:
             resp = session.get_tickers(category="linear", symbol=symbol)
             return float(resp['result']['list'][0]['lastPrice'])
-        except: return 0.0
+        except:
+            return 0.0
 
     @staticmethod
     def calc_step(cur_sz: float, base_qty: float) -> int:
-        if base_qty <= 0: return 1
+        if base_qty <= 0:
+            return 1
         ratio = cur_sz / base_qty
-        thresholds = [1, 2, 4, 8, 16, 32, 64]
+        # [BUG-8 수정] thresholds를 MAX_STEP에 자동 연동 (하드코딩 제거)
+        thresholds = [2 ** i for i in range(MAX_STEP)]
         step = 1
         for i, t in enumerate(thresholds):
-            if ratio >= t * 0.95: # ★개선: 여유치를 0.95로 상향하여 오더 중복 방지
+            if ratio >= t * 0.95:
                 step = i + 1
         return min(step, MAX_STEP)
 
-    def place_nets_and_exit(self, symbol, avg_price, current_sz, side, current_step, is_increase, unrealised_pnl) -> bool:
-        conf  = CONFIGS[symbol]; state = self.states[symbol]
-        p_idx = 1 if side == "Buy" else 2; opp_p_idx = 2 if side == "Buy" else 1
-        opp_side = "Sell" if side == "Buy" else "Buy"
+    def _calc_target_price(self, start_price: float, cumulative_pct: float,
+                           tick_size: int, side: str) -> float:
+        """
+        [질문1~2 수정] 퍼센트 갭을 실제 가격으로 변환
+        중간 정밀도(tick_size+2)로 부동소수점 오차 흡수 후 최종 tick_size로 반올림
+        """
+        gap_amt  = round(start_price * cumulative_pct / 100, tick_size + 2)
+        if side == "Buy":
+            raw = start_price - gap_amt
+        else:
+            raw = start_price + gap_amt
+        return round(raw, tick_size)
+
+    def place_nets_and_exit(self, symbol: str, avg_price: float, current_sz: float,
+                            side: str, current_step: int, is_increase: bool,
+                            unrealised_pnl: float) -> bool:
+        conf  = CONFIGS[symbol]
+        state = self.states[symbol]
+        p_idx       = 1 if side == "Buy" else 2
+        opp_p_idx   = 2 if side == "Buy" else 1
+        opp_side    = "Sell" if side == "Buy" else "Buy"
         hedge_trig_dir = 2 if side == "Buy" else 1
 
-        try:
-            # ★ADD-2: cancel_and_wait으로 교체
-            # 기존 고정 1.5초 대기 → 취소 완료 폴링 확인 방식으로 변경
-            # Order + StopOrder 양쪽 모두 0개 확인 후 배치 진행
-            cancel_and_wait(symbol)
+        cancel_and_wait(symbol)
 
-            # 본전 50% 덜어내기
-            # ★FIX-2 보조: state["last_step"] >= 2 이중 보호
-            # place_nets_and_exit 호출 시 전달된 current_step 뿐 아니라
-            # state에 저장된 last_step도 함께 확인 → step=1 시 절대 미발동
-            if current_step >= 2 and state["last_step"] >= 2 and unrealised_pnl >= 0 and not state["breakeven_done"] and not is_increase:
+        # ─── 본전 50% 덜어내기 ────────────────────────────────────────
+        # [BUG-6 수정] 독립 try/except — 실패해도 거미줄 오더는 계속 진행
+        if (current_step >= 2 and state["last_step"] >= 2
+                and unrealised_pnl >= 0
+                and not state["breakeven_done"]
+                and not is_increase):
+            try:
                 half_qty = round(current_sz * 0.5, conf["qty_step"])
                 if half_qty > 0:
-                    session.place_order(category="linear", symbol=symbol, side=opp_side, orderType="Limit",
-                                        qty=str(half_qty), price=str(round(avg_price, conf["tick_size"])),
-                                        reduceOnly=True, positionIdx=p_idx)
+                    session.place_order(
+                        category="linear", symbol=symbol,
+                        side=opp_side, orderType="Limit",
+                        qty=str(half_qty),
+                        price=str(round(avg_price, conf["tick_size"])),
+                        reduceOnly=True, positionIdx=p_idx
+                    )
                     state["breakeven_done"] = True
                     logging.info(f"📉 [{symbol}] 본전 50% 덜어내기 배치")
+            except Exception as e:
+                logging.warning(f"[{symbol}] 본전 오더 실패 (거미줄 배치 계속 진행): {e}")
 
-            for step in range(2, MAX_STEP + 1):
-                if step <= current_step: continue
-                end_idx = min(step - 1, len(conf["intervals"]))
-                cumulative_gap = sum(conf["intervals"][:end_idx])
+        # ─── 거미줄 오더 배치 ─────────────────────────────────────────
+        # [BUG-6 수정] 각 step 개별 try/except — 부분 실패 허용
+        success = True
+        for step in range(2, MAX_STEP + 1):
+            if step <= current_step:
+                continue
+            end_idx        = min(step - 1, len(conf["intervals"]))
+            cumulative_pct = sum(conf["intervals"][:end_idx])
 
-                target_p = round(state["start_price"] - cumulative_gap if side == "Buy" 
-                                 else state["start_price"] + cumulative_gap, conf["tick_size"])
+            # [질문1~2 수정] 퍼센트 기반 가격 계산 (부동소수점 안전 버전)
+            target_p = self._calc_target_price(
+                state["start_price"], cumulative_pct, conf["tick_size"], side
+            )
 
-                l_qty = round(state["detected_qty"] * (2 ** (step - 2)), conf["qty_step"])
-                if l_qty <= 0: continue
+            l_qty = round(state["detected_qty"] * (2 ** (step - 2)), conf["qty_step"])
+            if l_qty <= 0:
+                continue
 
-                session.place_order(category="linear", symbol=symbol, side=side, orderType="Limit",
-                                    qty=str(l_qty), price=str(target_p), timeInForce="PostOnly", positionIdx=p_idx)
+            try:
+                session.place_order(
+                    category="linear", symbol=symbol,
+                    side=side, orderType="Limit",
+                    qty=str(l_qty), price=str(target_p),
+                    timeInForce="PostOnly", positionIdx=p_idx
+                )
+            except Exception as e:
+                logging.error(f"[{symbol}] step={step} 리밋 오더 실패: {e}")
+                success = False
+                continue  # 실패해도 다음 step 계속 시도
 
-                if step >= HEDGE_START_STEP:
+            # ─── 헷징 오더 ───────────────────────────────────────────
+            if step >= HEDGE_START_STEP:
+                if step >= 6:
+                    hedge_qty = l_qty                              # 6회차~: 100%
+                else:
+                    hedge_qty = round(l_qty * 0.5, conf["qty_step"])  # 5회차: 50%
 
-                    # 6회차(step=6) 부터는 추가 물량의 100%를 헷징 (l_qty 전체)
-                    # 5회차(step=5) 는 기존대로 50%만 헷징
-                    if step >= 6:
-                        hedge_qty = l_qty 
-                    else:
-                        hedge_qty = round(l_qty * 0.5, conf["qty_step"])
+                if hedge_qty > 0:
+                    try:
+                        session.place_order(
+                            category="linear", symbol=symbol,
+                            side=opp_side, orderType="Market",
+                            qty=str(hedge_qty),
+                            triggerPrice=str(target_p),
+                            triggerBy="LastPrice",
+                            triggerDirection=hedge_trig_dir,
+                            positionIdx=opp_p_idx
+                        )
+                    except Exception as e:
+                        logging.error(f"[{symbol}] step={step} 헷지 오더 실패: {e}")
+                        success = False
 
-                    if hedge_qty > 0:
-                        # Bybit V5 규격: orderType="Market" + triggerPrice 조합이
-                        # 조건부 스탑 주문으로 처리됨. "StopMarket"은 잘못된 타입명.
-                        session.place_order(category="linear", symbol=symbol, side=opp_side, orderType="Market",
-                                            qty=str(hedge_qty), triggerPrice=str(target_p), triggerBy="LastPrice",
-                                            triggerDirection=hedge_trig_dir, positionIdx=opp_p_idx)
-            return True
-        except Exception as e:
-            logging.error(f"[{symbol}] 오더 배치 오류: {e}"); return False
+        return success
 
     def do_take_profit(self, symbol: str, side: str, cur_sz: float):
-        conf = CONFIGS[symbol]; state = self.states[symbol]
-        p_idx = 1 if side == "Buy" else 2; opp_p_idx = 2 if side == "Buy" else 1
-        opp_side = "Sell" if side == "Buy" else "Buy"
+        conf      = CONFIGS[symbol]
+        state     = self.states[symbol]
+        p_idx     = 1 if side == "Buy" else 2
+        opp_p_idx = 2 if side == "Buy" else 1
+        opp_side  = "Sell" if side == "Buy" else "Buy"
         try:
-            # ★ADD-2 동일 적용: 익절 시에도 cancel_and_wait으로 완전 취소 확인
             cancel_and_wait(symbol)
             # ① 본 포지션 종료
-            session.place_order(category="linear", symbol=symbol, side=opp_side, orderType="Market",
-                                qty=str(round(cur_sz, conf["qty_step"])), reduceOnly=True, positionIdx=p_idx)
-            
-            # ② ★수정: 헷지 포지션 종료 시 수량 round 처리 (Bug 3 반영)
+            session.place_order(
+                category="linear", symbol=symbol,
+                side=opp_side, orderType="Market",
+                qty=str(round(cur_sz, conf["qty_step"])),
+                reduceOnly=True, positionIdx=p_idx
+            )
+            # ② 헷지 포지션 종료
             try:
                 opp_pos = session.get_positions(category="linear", symbol=symbol)["result"]["list"]
                 for p in opp_pos:
                     if int(p["positionIdx"]) == opp_p_idx and float(p["size"]) > 0:
                         h_qty = str(round(float(p["size"]), conf["qty_step"]))
-                        session.place_order(category="linear", symbol=symbol, side=side, orderType="Market",
-                                            qty=h_qty, reduceOnly=True, positionIdx=opp_p_idx)
+                        session.place_order(
+                            category="linear", symbol=symbol,
+                            side=side, orderType="Market",
+                            qty=h_qty, reduceOnly=True, positionIdx=opp_p_idx
+                        )
                         logging.info(f"🛡️ [{symbol}] 헷지 포지션 종료: {h_qty}")
-            except: pass
+            except:
+                pass
 
-            state.update({"active":False,"breakeven_done":False,"reentry_pending":False,"last_tp_time":time.time(),"last_entry_price":0,"last_size":0,"last_step":1,"start_price":0})
+            # [BUG-5 수정] 공통 헬퍼로 완전 초기화
+            _reset_state(state, keep_tp_time=True)
             send_msg(f"💰 [{symbol}] 익절 완료 ({get_total_balance()})")
-        except Exception as e: logging.error(f"익절 오류: {e}")
+        except Exception as e:
+            logging.error(f"익절 오류: {e}")
 
     def run(self):
         logging.info("Step 3: 바이비트 데모 접속 완료")
         logging.info(f"Step 4: 잔액: {get_total_balance()}")
 
         # ★ADD-1: 봇 시작 시 전체 오더 정리
-        # 재시작 후 거래소에 남아있는 잔존 오더가 새 오더와 중복되는 문제 방지
-        # Order + StopOrder 모두 완전 취소 확인 후 메인 루프 진입
         logging.info("🧹 봇 시작: 모든 종목 잔존 오더 전체 정리 중...")
         for symbol in CONFIGS:
             cancel_and_wait(symbol, timeout=8.0)
@@ -343,53 +449,59 @@ class FinalSniperBotV7:
         time.sleep(1)
         logging.info("✅ 오더 정리 완료 — 메인 루프 시작")
 
-        supply_zones_cache = {s: [] for s in CONFIGS}; supply_zones_updated = {s: 0 for s in CONFIGS}
+        supply_zones_cache   = {s: [] for s in CONFIGS}
+        supply_zones_updated = {s: 0  for s in CONFIGS}
 
         while True:
             try:
-                pos_res = session.get_positions(category="linear", settleCoin="USDT")["result"]["list"]
+                pos_res = session.get_positions(
+                    category="linear", settleCoin="USDT"
+                )["result"]["list"]
+
                 for symbol in CONFIGS:
-                    state = self.states[symbol]; conf = CONFIGS[symbol]
+                    state = self.states[symbol]
+                    conf  = CONFIGS[symbol]
 
+                    # 공급 구역 30분마다 갱신
                     if time.time() - supply_zones_updated[symbol] > 1800:
-                        supply_zones_cache[symbol] = get_supply_zones(symbol); supply_zones_updated[symbol] = time.time()
+                        supply_zones_cache[symbol]   = get_supply_zones(symbol)
+                        supply_zones_updated[symbol] = time.time()
 
-                    long_p  = next((p for p in pos_res if p["symbol"] == symbol and p["side"] == "Buy"  and float(p["size"]) > 0), None)
-                    short_p = next((p for p in pos_res if p["symbol"] == symbol and p["side"] == "Sell" and float(p["size"]) > 0), None)
-                    main_p = (long_p if state["side"] == "Buy" else short_p) if state["active"] else (long_p or short_p)
+                    long_p  = next((p for p in pos_res
+                                    if p["symbol"] == symbol and p["side"] == "Buy"
+                                    and float(p["size"]) > 0), None)
+                    short_p = next((p for p in pos_res
+                                    if p["symbol"] == symbol and p["side"] == "Sell"
+                                    and float(p["size"]) > 0), None)
+                    main_p  = (
+                        (long_p if state["side"] == "Buy" else short_p)
+                        if state["active"]
+                        else (long_p or short_p)
+                    )
 
-                    # ─── [수정] 금/은 시장 거래 시간 엄수 로직 (KST 기준) ──────────
+                    # ─── 금/은 거래 시간 제한 (KST 기준) ─────────────────
                     is_metal = "XAU" in symbol or "XAG" in symbol
                     if is_metal and not main_p:
                         now = datetime.now()
-                        wd = now.weekday()
-                        hr = now.hour
-                        
-                        # 토요일(5) 06시부터 ~ 일요일(6) 전체 ~ 월요일(0) 07시 이전까지 차단
+                        wd, hr = now.weekday(), now.hour
+                        # 토요일 06시 ~ 월요일 07시 이전 차단
                         if (wd == 5 and hr >= 6) or (wd == 6) or (wd == 0 and hr < 7):
-                            continue # 진입 로직 건너뛰고 다음 종목으로
-                    # ──────────────────────────────────────────────────────────
+                            continue
+                    # ───────────────────────────────────────────────────────
 
-
-                    # ─── [A] 포지션 없음 ─────────────────────────────
+                    # ─── [A] 포지션 없음 ───────────────────────────────────
                     if not main_p:
                         if state["active"]:
-                            state.update({"active":False,"breakeven_done":False,"reentry_pending":False,"last_tp_time":time.time(),"last_size":0,"last_step":1,"start_price":0})
-                        # ★BUG-1 수정: 진입 로직을 if not main_p 블록 안으로 이동
-                        #   기존: 253번줄 if가 독립 블록 → 포지션 있어도 진입 시도 발생
-                        if (time.time() - state["last_tp_time"]) > REENTRY_COOLDOWN and not state["reentry_pending"]:
+                            # [BUG-5 수정] 공통 헬퍼로 완전 초기화
+                            _reset_state(state, keep_tp_time=True)
+
+                        if ((time.time() - state["last_tp_time"]) > REENTRY_COOLDOWN
+                                and not state["reentry_pending"]):
                             rsi, ema50, closed_price = self.get_indicators(symbol)
-                            # ★BUG-2 수정: ema50 <= 0 시 continue → if ema50 > 0 으로 교체
-                            #   continue는 for symbol 루프를 건너뛰어 XAUUSDT 마틴게일 관리까지 스킵했음
+
                             if ema50 > 0:
-                                # ── 롱 진입 조건 ──────────────────────────
-                                # 조건 A (추세 눌림목): 종가 > EMA50 이면서 RSI ≤ 35
-                                # 조건 B (절대 과매도): RSI ≤ 30 (이평선 위치 무관)
                                 long_A  = (closed_price > ema50 and rsi <= 35)
                                 long_B  = (rsi <= 30)
-                                # ── 숏 진입 조건 ──────────────────────────
-                                # 조건 A (추세 반등):   종가 < EMA50 이면서 RSI ≥ 65
-                                # 조건 B (절대 과매수): RSI ≥ 70 (이평선 위치 무관)
                                 short_A = (closed_price < ema50 and rsi >= 65)
                                 short_B = (rsi >= 70)
 
@@ -400,146 +512,199 @@ class FinalSniperBotV7:
                                     side_order = "Sell"
 
                                 if side_order:
-                                    qty = conf["min_unit"]
-                                    # ★FIX-1: Atomic State Update
-                                    # place_order 직전에 reentry_pending=True를 먼저 설정.
-                                    # API가 타임아웃/오류로 실패해도 다음 루프에서 재진입을 막음.
-                                    # 실패 시 except에서 False로 복구 → 재시도 허용.
-                                    state["reentry_pending"] = True
-                                    state["side"] = side_order
-                                    try:
-                                        session.place_order(
-                                            category="linear", symbol=symbol,
-                                            side=side_order, orderType="Market",
-                                            qty=str(round(qty, conf["qty_step"])),
-                                            positionIdx=1 if side_order == "Buy" else 2
+                                    # [BUG-2/7 수정] 실시간 시세로 공급 구역 체크
+                                    current_price = self.get_market_price(symbol)
+                                    if (side_order == "Buy"
+                                            and is_near_supply_zone(
+                                                current_price, supply_zones_cache[symbol])):
+                                        logging.info(
+                                            f"⛔ [{symbol}] 공급 구역 근처 롱 진입 차단: "
+                                            f"{current_price}"
                                         )
-                                        reason = "A(눌림목)" if (side_order == "Buy" and long_A) or (side_order == "Sell" and short_A) else "B(절대RSI)"
-                                        logging.info(f"🎯 [{symbol}] {side_order} 진입 | 조건:{reason} RSI:{round(rsi,1)} EMA50:{round(ema50,2)} 종가:{closed_price}")
-                                    except Exception as e:
-                                        # 주문 실패 → 상태 복구하여 다음 루프에서 재시도 허용
-                                        state["reentry_pending"] = False
-                                        state["side"] = None
-                                        logging.warning(f"⚠️  [{symbol}] 진입 주문 실패, 상태 복구: {e}")
+                                    else:
+                                        qty = conf["min_unit"]
+                                        # ★FIX-1: Atomic State Update
+                                        state["reentry_pending"] = True
+                                        state["side"]            = side_order
+                                        try:
+                                            session.place_order(
+                                                category="linear", symbol=symbol,
+                                                side=side_order, orderType="Market",
+                                                qty=str(round(qty, conf["qty_step"])),
+                                                positionIdx=1 if side_order == "Buy" else 2
+                                            )
+                                            reason = (
+                                                "A(눌림목)"
+                                                if (side_order == "Buy" and long_A)
+                                                   or (side_order == "Sell" and short_A)
+                                                else "B(절대RSI)"
+                                            )
+                                            logging.info(
+                                                f"🎯 [{symbol}] {side_order} 진입 | "
+                                                f"조건:{reason} RSI:{round(rsi,1)} "
+                                                f"EMA50:{round(ema50,2)} 종가:{closed_price}"
+                                            )
+                                        except Exception as e:
+                                            state["reentry_pending"] = False
+                                            state["side"]            = None
+                                            logging.warning(
+                                                f"⚠️  [{symbol}] 진입 주문 실패, 상태 복구: {e}"
+                                            )
                                 elif state["reentry_pending"]:
-                                    # ★FIX-1 보조: 이미 대기 중인데 조건이 또 충족된 경우 Skip 로그
-                                    logging.debug(f"⏭️  [{symbol}] reentry_pending=True → 중복 진입 차단")
+                                    logging.debug(
+                                        f"⏭️  [{symbol}] reentry_pending=True → 중복 진입 차단"
+                                    )
 
-                    # ─── [B] 포지션 있음 ─────────────────────────────
+                    # ─── [B] 포지션 있음 ───────────────────────────────────
                     else:
-                        cur_sz, cur_av = float(main_p["size"]), float(main_p["avgPrice"])
-                        unr_pnl = float(main_p.get("unrealisedPnl", 0))
+                        cur_sz  = float(main_p["size"])
+                        cur_av  = float(main_p["avgPrice"])
+                        # [BUG-3 수정] 키 철자 이중 대응
+                        unr_pnl = _get_unr_pnl(main_p)
 
                         if not state["active"] or abs(cur_sz - state["last_size"]) > 1e-6:
-                            is_inc = cur_sz > state["last_size"]; time.sleep(3)
-                            
-                            # ★수정: 데이터 안정화 후 포지션 재조회 (Bug 4 반영)
-                            ref_res = session.get_positions(category="linear", symbol=symbol)["result"]["list"]
-                            main_p = next((p for p in ref_res if p["side"] == main_p["side"]), main_p)
-                            cur_sz, cur_av = float(main_p["size"]), float(main_p["avgPrice"])
-                            unr_pnl = float(main_p.get("unrealisedPnl", 0))
+                            is_inc = cur_sz > state["last_size"]
+                            time.sleep(3)
+
+                            # 데이터 안정화 후 포지션 재조회
+                            ref_res = session.get_positions(
+                                category="linear", symbol=symbol
+                            )["result"]["list"]
+
+                            # [BUG-4 수정] positionIdx까지 함께 검증
+                            tgt_idx = 1 if main_p["side"] == "Buy" else 2
+                            main_p  = next(
+                                (p for p in ref_res
+                                 if p["side"] == main_p["side"]
+                                 and int(p["positionIdx"]) == tgt_idx),
+                                main_p
+                            )
+                            cur_sz  = float(main_p["size"])
+                            cur_av  = float(main_p["avgPrice"])
+                            # [BUG-3 수정] 재조회 후에도 이중 키 대응
+                            unr_pnl = _get_unr_pnl(main_p)
 
                             if not state["active"]:
-                                # ★V7 FIX: start_price 로직 단순화
-                                # ─────────────────────────────────────────────────────
-                                # [구 로직 제거] get_executions로 체결가를 역추적하던 방식 삭제.
-                                #   문제: 숏 진입 시 min(exec_p)를 기준가로 잡아,
-                                #         슬리피지·이전 거래 잔존 데이터 오염으로
-                                #         실제 평단가(예: 77,195)보다 훨씬 낮은 가격을
-                                #         start_price로 오판 → 2차 오더가 잘못된 위치에 배치됨.
-                                # [신 로직] 포지션이 처음 감지되는 순간,
-                                #   거래소 API가 반환하는 현재 포지션의 평균단가(avgPrice)를
-                                #   start_price로 즉시 고정. 롱/숏 동일하게 적용.
-                                #   → 실제 잡힌 평단가로부터 정확한 intervals 간격으로 거미줄 보장.
+                                # ★V7 FIX: avgPrice 직접 고정
                                 state["start_price"] = cur_av
-
-                                # ★FIX-2: detected_qty = cur_sz (실제 첫 진입 수량 기준)
-                                # 기존: detected_qty=conf[min_unit]=0.01 고정
-                                #   → 중복 체결로 cur_sz=0.02면 calc_step(0.02,0.01)=2 오판
-                                # 수정: detected_qty=cur_sz
-                                #   → calc_step(cur_sz, cur_sz) = 1 항상 보장
-                                #   → 마틴 배수 기준도 실제 첫 진입 수량 기반으로 자연스럽게 설정
-                                # last_step=1 강제 고정으로 이중 보호
                                 state.update({
                                     "active":          True,
                                     "side":            main_p["side"],
-                                    "detected_qty":    cur_sz,   # ★ min_unit → cur_sz
+                                    "detected_qty":    cur_sz,
                                     "reentry_pending": False,
                                     "breakeven_done":  False,
-                                    "last_step":       1,        # ★ 강제 고정
+                                    "last_step":       1,
                                 })
-                                logging.info(f"🚀 [{symbol}] {state['side']} 전략 시작 | 기준가={state['start_price']} 기준수량={cur_sz}")
+                                logging.info(
+                                    f"🚀 [{symbol}] {state['side']} 전략 시작 | "
+                                    f"기준가={state['start_price']} 기준수량={cur_sz}"
+                                )
                                 is_inc = True
 
                             current_step = self.calc_step(cur_sz, state["detected_qty"])
-                            state.update({"last_size":cur_sz, "entry_price":cur_av, "last_step":current_step})
-                            if is_inc: state["breakeven_done"] = False
+                            state.update({
+                                "last_size":   cur_sz,
+                                "entry_price": cur_av,
+                                "last_step":   current_step,
+                            })
+                            if is_inc:
+                                state["breakeven_done"] = False
 
-                            # ★ADD-3: size_changed 경로도 Lock으로 보호
-                            # 기존: Lock 없이 호출 → 본전탈출 실시간 체크와 동시 실행 가능
-                            # 수정: 모든 place_nets_and_exit 호출 경로를 Lock으로 통일
+                            # ★ADD-3: Lock으로 보호
                             if not state["lock"]:
                                 state["lock"] = True
                                 try:
-                                    self.place_nets_and_exit(symbol, cur_av, cur_sz, state["side"], current_step, is_inc, unr_pnl)
+                                    self.place_nets_and_exit(
+                                        symbol, cur_av, cur_sz,
+                                        state["side"], current_step, is_inc, unr_pnl
+                                    )
                                 finally:
                                     state["lock"] = False
 
-                        # ★수정: continue 삭제 및 처리 플래그 도입 (Bug 1 반영)
+                        # 본전 덜어내기 실시간 체크
                         processed_be = False
-                        if state["last_step"] >= 2 and not state["breakeven_done"] and unr_pnl >= 0 and not state["lock"]:
+                        if (state["last_step"] >= 2
+                                and not state["breakeven_done"]
+                                and unr_pnl >= 0
+                                and not state["lock"]):
                             state["lock"] = True
-                            try: 
-                                self.place_nets_and_exit(symbol, cur_av, cur_sz, state["side"], state["last_step"], False, unr_pnl)
+                            try:
+                                self.place_nets_and_exit(
+                                    symbol, cur_av, cur_sz,
+                                    state["side"], state["last_step"], False, unr_pnl
+                                )
                                 processed_be = True
-                            finally: state["lock"] = False
+                            finally:
+                                state["lock"] = False
 
-                        if not processed_be: # 본전 덜어내기 직후면 이번 사이클 익절 스킵
+                        # 익절 체크 (본전 덜어내기 직후 사이클은 스킵)
+                        if not processed_be:
                             round_trip_fee = cur_sz * cur_av * FEE_RATE * 2
-                            net_pnl = unr_pnl - round_trip_fee
-                            multiplier = 3  # <--- 5에서 3으로 수정 (전 단계 수수료 3배 익절)
+                            net_pnl        = unr_pnl - round_trip_fee
+                            multiplier     = 3
                             if net_pnl >= (round_trip_fee * multiplier) and not state["lock"]:
                                 state["lock"] = True
-                                try: self.do_take_profit(symbol, state["side"], cur_sz)
-                                finally: state["lock"] = False
+                                try:
+                                    self.do_take_profit(symbol, state["side"], cur_sz)
+                                finally:
+                                    state["lock"] = False
+
                 time.sleep(5)
-            except Exception as e: logging.error(f"루프 에러: {e}"); time.sleep(10)
+
+            except Exception as e:
+                logging.error(f"루프 에러: {e}")
+                time.sleep(10)
+
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# [4] 진입점
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+def _check_pid(pid: int) -> bool:
+    """
+    [BUG-9 수정] PID 생존 여부 확인 — Windows/Unix 호환
+    1순위: psutil (크로스 플랫폼)
+    2순위: os.kill(pid, 0) Unix 방식
+    3순위: fallback — 판단 불가 시 False 반환(실행 허용)
+    """
+    # psutil 사용 가능 시 (가장 신뢰도 높음)
+    try:
+        import psutil
+        return psutil.pid_exists(pid)
+    except ImportError:
+        pass
+
+    # Unix 계열 fallback
+    try:
+        os.kill(pid, 0)
+        return True
+    except (OSError, ProcessLookupError):
+        return False
+    except Exception:
+        # Windows 등 예외 — 판단 불가, 실행 허용
+        return False
+
 
 if __name__ == "__main__":
-    # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-    # 질문3: PID 파일로 중복 프로세스 실행 차단
-    # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-    # 로그가 2줄씩 찍히는 가장 흔한 원인:
-    #   터미널 A에서 실행 중인데 터미널 B에서 또 실행한 경우.
-    # PID 파일을 생성하여 이미 실행 중이면 즉시 종료.
-    import os, sys
 
     PID_FILE = "bybit7.pid"
 
-    def _check_pid(pid: int) -> bool:
-        """해당 PID 프로세스가 실제로 살아있는지 확인"""
-        try:
-            os.kill(pid, 0)   # 시그널 0 = 존재 여부만 확인
-            return True
-        except (OSError, ProcessLookupError):
-            return False
-
-    # 기존 PID 파일 확인
     if os.path.exists(PID_FILE):
-        with open(PID_FILE, "r") as f:
-            old_pid = int(f.read().strip())
-        if _check_pid(old_pid):
-            logging.error(
-                f"🚫 이미 실행 중인 봇이 있습니다 (PID: {old_pid}). "
-                f"중복 실행 차단 — 종료합니다.\n"
-                f"   강제 종료하려면: kill {old_pid}"
-            )
-            sys.exit(1)
-        else:
-            # 이전 프로세스가 비정상 종료하여 PID 파일만 남은 경우
-            logging.warning(f"⚠️  PID {old_pid} 은 이미 종료됨. PID 파일 재생성.")
+        try:
+            with open(PID_FILE, "r") as f:
+                old_pid = int(f.read().strip())
+            if _check_pid(old_pid):
+                logging.error(
+                    f"🚫 이미 실행 중인 봇이 있습니다 (PID: {old_pid}). "
+                    f"중복 실행 차단 — 종료합니다.\n"
+                    f"   강제 종료하려면: kill {old_pid}"
+                )
+                sys.exit(1)
+            else:
+                logging.warning(f"⚠️  PID {old_pid} 은 이미 종료됨. PID 파일 재생성.")
+        except (ValueError, IOError) as e:
+            logging.warning(f"⚠️  PID 파일 읽기 실패, 재생성: {e}")
 
-    # 현재 프로세스 PID 기록
     with open(PID_FILE, "w") as f:
         f.write(str(os.getpid()))
     logging.info(f"🔒 PID 파일 생성: {PID_FILE} (PID: {os.getpid()})")
@@ -548,7 +713,6 @@ if __name__ == "__main__":
         bot = FinalSniperBotV7()
         bot.run()
     finally:
-        # 봇 종료 시 PID 파일 삭제 (정상/비정상 종료 모두)
         if os.path.exists(PID_FILE):
             os.remove(PID_FILE)
             logging.info("🔓 PID 파일 삭제 완료")
