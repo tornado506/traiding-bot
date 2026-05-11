@@ -562,6 +562,10 @@ class FinalSniperBotV7:
                         # [BUG-3 수정] 키 철자 이중 대응
                         unr_pnl = _get_unr_pnl(main_p)
 
+                        # ★ NameError 방지: if 블록 진입 여부와 무관하게 항상 초기화
+                        # size변화(경로A) 진입 시 True → 경로B(본전체크) 스킵
+                        nets_placed_this_cycle = False
+
                         if not state["active"] or abs(cur_sz - state["last_size"]) > 1e-6:
                             is_inc = cur_sz > state["last_size"]
                             time.sleep(3)
@@ -611,6 +615,7 @@ class FinalSniperBotV7:
                                 state["breakeven_done"] = False
 
                             # ★ADD-3: Lock으로 보호
+                            # size 변화 경로(A)가 실행되면 이번 사이클 경로(B)는 스킵
                             if not state["lock"]:
                                 state["lock"] = True
                                 try:
@@ -618,12 +623,18 @@ class FinalSniperBotV7:
                                         symbol, cur_av, cur_sz,
                                         state["side"], current_step, is_inc, unr_pnl
                                     )
+                                    nets_placed_this_cycle = True   # ★ 경로A 실행 표시
                                 finally:
                                     state["lock"] = False
 
                         # 본전 덜어내기 실시간 체크
+                        # ★중복 오더 수정: 경로A(size변화)가 이미 실행됐으면 경로B 완전 스킵
+                        # 기존: nets_placed_this_cycle 없음 → 같은 사이클에서 경로B 진입 가능
+                        #       경로B의 cancel_and_wait가 경로A 오더 전체 취소 후 재배치 → 중복
+                        # 수정: nets_placed_this_cycle=True 이면 경로B 조건 자체를 차단
                         processed_be = False
-                        if (state["last_step"] >= 2
+                        if (not nets_placed_this_cycle          # ★ 핵심 추가 조건
+                                and state["last_step"] >= 2
                                 and not state["breakeven_done"]
                                 and unr_pnl >= 0
                                 and not state["lock"]):
