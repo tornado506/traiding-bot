@@ -100,7 +100,7 @@ session = HTTP(
 CONFIGS = {
     "BTCUSDT":  {"intervals": [1.5, 1.5, 1.5, 2.0, 2.5, 2.5], "tick_size": 1, "qty_step": 3, "min_unit": 0.01},
     "XAUUSDT":  {"intervals": [1.5, 1.5, 1.5, 2.0, 2.5, 2.5], "tick_size": 2, "qty_step": 2, "min_unit": 0.2},
-    "ETHUSDT":  {"intervals": [1.5, 1.5, 1.5, 2.0, 2.5, 2.5], "tick_size": 2, "qty_step": 2, "min_unit": 0.2},
+    "ETHUSDT":  {"intervals": [1.5, 1.5, 1.5, 2.0, 2.5, 2.5], "tick_size": 2, "qty_step": 2, "min_unit": 0.3},
     "SOLUSDT":  {"intervals": [1.5, 1.5, 1.5, 2.0, 2.5, 2.5], "tick_size": 3, "qty_step": 1, "min_unit": 6},
     "XAGUSDT":  {"intervals": [1.5, 1.5, 1.5, 2.0, 2.5, 2.5], "tick_size": 3, "qty_step": 1, "min_unit": 7},
     "DOGEUSDT": {"intervals": [1.5, 1.5, 1.5, 2.0, 2.5, 2.5], "tick_size": 5, "qty_step": 0, "min_unit": 5000},
