@@ -841,7 +841,7 @@ def _check_pid(pid: int) -> bool:
 
 
 if __name__ == "__main__":
-    PID_FILE = "bybit7.pid"
+    PID_FILE = "bybit_user2.pid"
 
     if os.path.exists(PID_FILE):
         try:
