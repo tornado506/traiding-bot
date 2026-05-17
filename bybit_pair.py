@@ -65,7 +65,7 @@ PAIRS = {
         'a':        'BTCUSDT',
         'b':        'ETHUSDT',
         'val':      10000,          # 포지션 총액 ($) — 각 레그 $5,000
-        'ze':       2.2,            # 진입 Z 임계값
+        'ze':       2.5,            # 진입 Z 임계값
         'max_hold': 96,             # 타임스탑 (시간) — 트레일링 미발동 구간에만 작동
         # ── 트레일링 스탑 (순수익 기준) ──────────────
         'trail_activation': 22.0,   # 순수익 이 값 도달 시 트레일링 발동
@@ -76,7 +76,7 @@ PAIRS = {
         'a':        'XAUUSDT',
         'b':        'XAGUSDT',
         'val':      10000,
-        'ze':       2.2,
+        'ze':       2.5,
         'max_hold': 120,
         'trail_activation': 16.0,
         'trail_callback':    6.0,
@@ -86,7 +86,7 @@ PAIRS = {
         'a':        'SOLUSDT',
         'b':        'AVAXUSDT',
         'val':      10000,
-        'ze':       2.4,
+        'ze':       2.6,
         'max_hold': 84,
         'trail_activation': 22.0,
         'trail_callback':    9.0,
